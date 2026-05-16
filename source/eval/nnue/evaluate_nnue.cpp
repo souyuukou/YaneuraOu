@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <cmath>
+#include <cstring>
 
 #define INCBIN_SILENCE_BITCODE_WARNING
 #include "../../incbin/incbin.h"
@@ -26,6 +28,193 @@
 namespace YaneuraOu::Eval::NNUE {
 extern int FV_SCALE;
 }
+
+// ============================================================
+//         progress8kpabs バケット選択
+// ============================================================
+
+#if defined(SFNNwoPSQT)
+namespace {
+
+// バケットモード
+enum class LSBucketMode { KingRank9, KingColor9, Progress8KPAbs };
+LSBucketMode ls_bucket_mode = LSBucketMode::KingRank9;
+
+// ルックアップテーブル共通構造体
+// f[sq]: 先手視点正規化済み sq に対する自玉側バケット寄与値
+// e[sq]: 先手視点正規化済み sq に対する敵玉側バケット寄与値
+struct BucketTable { int8_t f[81]; int8_t e[81]; };
+
+// stm(手番) と両玉位置の組み合わせから最終バケット(0..8)を直接引くテーブル。
+// [stm][f_king_sq][e_king_sq]
+struct alignas(64) KingPairBucketIndexTable { uint8_t v[YaneuraOu::COLOR_NB][81][81]; };
+
+// KingRank9 テーブル（コンパイル時生成）
+//   f = (r/3)*3  (r=sq%9)    → 段0-2:0 / 段3-5:3 / 段6-8:6
+//   e = (8-r)/3              → 段0-2:2 / 段3-5:1 / 段6-8:0
+static constexpr BucketTable kBucketKingRank9 = []() constexpr {
+    BucketTable t{};
+    for (int sq = 0; sq < 81; ++sq) {
+        const int r = sq % 9;
+        t.f[sq] = static_cast<int8_t>((r / 3) * 3);
+        t.e[sq] = static_cast<int8_t>((8 - r) / 3);
+    }
+    return t;
+}();
+
+// KingColor9 テーブル（コンパイル時生成）
+//   sq = file*9 + rank なので sq%2 = (file+rank)%2 = 市松模様色(四つ角=0=白)
+//   Inv(sq)=80-sq, 80は偶数 → Inv(sq)%2 == sq%2（先後反転で色不変）
+//   f = r>=6 ? 3*(c+1) : 0  → 自陣後ろ3段のみ非ゼロ
+//   e = r<=2 ? (c+1)   : 0  → 相手陣後ろ3段のみ非ゼロ
+static constexpr BucketTable kBucketKingColor9 = []() constexpr {
+    BucketTable t{};
+    for (int sq = 0; sq < 81; ++sq) {
+        const int r = sq % 9;
+        const int c = sq % 2;  // 0=白マス, 1=黒マス
+        t.f[sq] = static_cast<int8_t>(r >= 6 ? 3 * (c + 1) : 0);
+        t.e[sq] = static_cast<int8_t>(r <= 2 ?     (c + 1) : 0);
+    }
+    return t;
+}();
+
+static constexpr KingPairBucketIndexTable make_king_pair_bucket_index_table(const BucketTable& tbl) {
+    KingPairBucketIndexTable t{};
+    for (int stm = 0; stm < YaneuraOu::COLOR_NB; ++stm) {
+        for (int f_king = 0; f_king < 81; ++f_king) {
+            for (int e_king = 0; e_king < 81; ++e_king) {
+                // 後手番では先手視点へ正規化した値で参照する。
+                const int f_sq = (stm == YaneuraOu::BLACK)
+                    ? f_king
+                    : static_cast<int>(YaneuraOu::Inv(static_cast<YaneuraOu::Square>(f_king)));
+                const int e_sq = (stm == YaneuraOu::BLACK)
+                    ? e_king
+                    : static_cast<int>(YaneuraOu::Inv(static_cast<YaneuraOu::Square>(e_king)));
+                t.v[stm][f_king][e_king] = static_cast<uint8_t>(tbl.f[f_sq] + tbl.e[e_sq]);
+            }
+        }
+    }
+    return t;
+}
+
+// hand-crafted bucket モード用の最終バケットLUT。
+static constexpr KingPairBucketIndexTable kKingPairBucketKingRank9 =
+    make_king_pair_bucket_index_table(kBucketKingRank9);
+static constexpr KingPairBucketIndexTable kKingPairBucketKingColor9 =
+    make_king_pair_bucket_index_table(kBucketKingColor9);
+
+// 非 progress8kpabs 時に使用する有効LUT。
+// progress8kpabs で progress.bin 未ロード時は kingrank9 へフォールバックする。
+const KingPairBucketIndexTable* active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+
+// progress8kpabs の重み (81 * fe_old_end floats)
+// progress.bin = f64[81][fe_old_end], 読み込み時に f32 に変換
+constexpr int PROGRESS_KP_ABS_NUM_WEIGHTS = 81 * YaneuraOu::Eval::fe_old_end;
+float* progress_kpabs_weights = nullptr;
+
+void set_ls_bucket_mode(const std::string& mode) {
+    if (mode == "progress8kpabs") {
+        ls_bucket_mode = LSBucketMode::Progress8KPAbs;
+        // progress.bin 未ロード時の互換フォールバック
+        active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+    } else if (mode == "kingcolor9") {
+        ls_bucket_mode = LSBucketMode::KingColor9;
+        active_king_pair_bucket_table = &kKingPairBucketKingColor9;
+    } else {
+        ls_bucket_mode = LSBucketMode::KingRank9;
+        active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+    }
+}
+
+// sigmoid(x)*8 = k となる x の閾値 (k=1..7)
+// x = ln(k / (8-k))
+constexpr float PROGRESS_BUCKET_THRESHOLDS[7] = {
+    -1.9459101f, // ln(1/7)
+    -1.0986123f, // ln(2/6)
+    -0.5108256f, // ln(3/5)
+     0.0000000f, // ln(4/4) = 0
+     0.5108256f, // ln(5/3)
+     1.0986123f, // ln(6/2)
+     1.9459101f, // ln(7/1)
+};
+
+// progress_sum から bucket index (0..7) を計算
+inline int progress_sum_to_bucket(float sum) {
+    int bucket = 0;
+    for (auto t : PROGRESS_BUCKET_THRESHOLDS)
+        if (sum >= t) bucket++;
+    return bucket;
+}
+
+// progress8kpabs の重み付き和を全駒スキャンで計算
+float compute_progress8kpabs_sum(const YaneuraOu::Position& pos) {
+    using namespace YaneuraOu;
+    using namespace YaneuraOu::Eval;
+
+    const int sq_bk = pos.square<KING>(BLACK);
+    const int sq_wk = Inv(pos.square<KING>(WHITE));
+
+    float sum = 0.0f;
+    const BonaPiece* fb = pos.eval_list()->piece_list_fb();
+    const BonaPiece* fw = pos.eval_list()->piece_list_fw();
+    for (int i = 0; i < PIECE_NUMBER_KING; ++i) {
+        if (fb[i] != BONA_PIECE_ZERO && fb[i] < fe_old_end)
+            sum += progress_kpabs_weights[sq_bk * fe_old_end + fb[i]];
+        if (fw[i] != BONA_PIECE_ZERO && fw[i] < fe_old_end)
+            sum += progress_kpabs_weights[sq_wk * fe_old_end + fw[i]];
+    }
+    return sum;
+}
+
+// progress8kpabs バケット計算
+int compute_progress8kpabs_bucket(const YaneuraOu::Position& pos) {
+    float sum = compute_progress8kpabs_sum(pos);
+    return progress_sum_to_bucket(sum);
+}
+
+// progress.bin を読み込む (f64[81][fe_old_end] -> f32)
+bool load_progress_bin(const std::string& path) {
+    using namespace YaneuraOu;
+
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) return false;
+
+    const size_t expected_bytes = PROGRESS_KP_ABS_NUM_WEIGHTS * sizeof(double);
+    // ファイルサイズチェック
+    ifs.seekg(0, std::ios::end);
+    auto file_size = ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+    if (file_size != static_cast<std::streamoff>(expected_bytes)) {
+        sync_cout << "info string progress.bin size mismatch: got " << file_size
+                  << " bytes, expected " << expected_bytes << sync_endl;
+        return false;
+    }
+
+    // 既存の重みを解放
+    delete[] progress_kpabs_weights;
+    progress_kpabs_weights = new float[PROGRESS_KP_ABS_NUM_WEIGHTS];
+
+    // f64 で読み込んで f32 に変換
+    for (int i = 0; i < PROGRESS_KP_ABS_NUM_WEIGHTS; ++i) {
+        double val;
+        ifs.read(reinterpret_cast<char*>(&val), sizeof(double));
+        progress_kpabs_weights[i] = static_cast<float>(val);
+    }
+
+    if (!ifs) {
+        sync_cout << "info string progress.bin read error" << sync_endl;
+        delete[] progress_kpabs_weights;
+        progress_kpabs_weights = nullptr;
+        return false;
+    }
+
+    sync_cout << "info string loaded progress.bin: " << PROGRESS_KP_ABS_NUM_WEIGHTS
+              << " weights from " << path << sync_endl;
+    return true;
+}
+
+} // anonymous namespace
+#endif // defined(SFNNwoPSQT)
  
 // ============================================================
 //              旧評価関数のためのヘルパー
@@ -82,6 +271,25 @@ void add_options_(OptionsMap& options, ThreadPool& threads) {
                     YaneuraOu::Eval::NNUE::FV_SCALE = int(o);
                     return std::nullopt;
                 }));
+
+#if defined(SFNNwoPSQT)
+    // LayerStacks バケット選択モード
+    Options.add("LS_BUCKET_MODE", Option("kingrank9", [](const Option& o) {
+                    set_ls_bucket_mode(std::string(o));
+                    return std::nullopt;
+                }));
+
+    // progress8kpabs の progress.bin パス
+    Options.add("LS_PROGRESS_COEFF", Option("", [](const Option& o) {
+                    std::string path = std::string(o);
+                    if (!path.empty()) {
+                        if (!load_progress_bin(path)) {
+                            sync_cout << "info string Warning: failed to load progress.bin: " << path << sync_endl;
+                        }
+                    }
+                    return std::nullopt;
+                }));
+#endif
 }
 #endif
 
@@ -208,6 +416,20 @@ namespace {
 				<< sync_endl;
 		}
 
+#if defined(SFNNwoPSQT_V2)
+		// FV_SCALE をアーキテクチャ文字列から自動検出
+		{
+			auto pos = architecture.find("fv_scale=");
+			if (pos != std::string::npos) {
+				int detected = std::atoi(architecture.c_str() + pos + 9);
+				if (detected > 0 && detected <= 128) {
+					FV_SCALE = detected;
+					sync_cout << "info string FV_SCALE auto-detected: " << FV_SCALE << sync_endl;
+				}
+			}
+		}
+#endif
+
 		result = Detail::ReadParameters<FeatureTransformer>(stream, tmp->feature_transformer);
 		if (result.is_not_ok()) {
 			sync_cout << "info string NNUE feature params read failed: " << result.to_string() << sync_endl;
@@ -221,8 +443,13 @@ namespace {
 			}
 		}
 
+#if defined(SFNNwoPSQT_V2)
+		if (stream && stream.peek() != std::ios::traits_type::eof())
+			sync_cout << "info string Warning: NNUE file has trailing data (ignored)" << sync_endl;
+#else
 		if (!stream || stream.peek() != std::ios::traits_type::eof())
 			return Tools::ResultCode::FileCloseError;
+#endif
 
 		// 共有メモリに配置（同一ハッシュの共有メモリが既に存在すればそちらを参照）
 		shared_networks = SystemWideSharedConstant<NnueNetworks>(*tmp);
@@ -241,11 +468,18 @@ namespace {
 		if (!stream) return Tools::ResultCode::FileReadError;
 		if (version_out)
 			*version_out = version;
+#if defined(SFNNwoPSQT_V2)
+        if (version != kVersion) {
+			sync_cout << "info string Warning: NNUE header version mismatch: expected " << kVersion
+				<< " got " << version << " (continuing anyway)" << sync_endl;
+		}
+#else
         if (version != kVersion) {
 			sync_cout << "info string NNUE header version mismatch: expected " << kVersion
 				<< " got " << version << sync_endl;
 			return Tools::ResultCode::FileMismatch;
 		}
+#endif
         architecture->resize(size);
         stream.read(&(*architecture)[0], size);
 		return !stream.fail() ? Tools::ResultCode::Ok : Tools::ResultCode::FileReadError;
@@ -282,19 +516,39 @@ namespace {
     }
 
 #if defined(SFNNwoPSQT)
-    // レイヤースタックの選択。双方の玉の段に応じて9通りに分岐させる。
+    // スレッドローカルな AccumulatorCaches
+    static thread_local AccumulatorCaches tls_acc_cache;
+
+    // キャッシュ付き版: 差分計算ができるなら進める
+    static void UpdateAccumulatorIfPossibleWithCache(const Position& pos) {
+        networks().feature_transformer.UpdateAccumulatorIfPossible(pos, tls_acc_cache);
+    }
+
+    // AccumulatorCaches を無効化する（新しい局面が設定されたときに呼ぶ）
+    static void InvalidateAccumulatorCaches() {
+        tls_acc_cache.invalidate();
+    }
+    // レイヤースタックの選択。
+    // kingrank9   : 双方の玉の段に応じて9通りに分岐させる。
+    // kingcolor9  : 自陣後ろ3段か否か × 玉のマス色(市松模様)で9通りに分岐させる。
+    // progress8kpabs: KP-absolute 進行度に応じて8通りに分岐させる。
+    //
+    // kingrank9 / kingcolor9 はルックアップテーブルで高速化。
+    // 後手番のとき両玉を Inv(sq)=80-sq で先手視点に正規化してテーブルを共用する。
     static int stack_index_for_nnue(const Position& pos) {
-        constexpr int kFToIndex[] = { 0, 0, 0, 3, 3, 3, 6, 6, 6 };
-        constexpr int kEToIndex[] = { 0, 0, 0, 1, 1, 1, 2, 2, 2 };
+        if (ls_bucket_mode == LSBucketMode::Progress8KPAbs && progress_kpabs_weights != nullptr) {
+            int bucket = compute_progress8kpabs_bucket(pos);
+            // progress8kpabs は 0..7 の 8バケット (LayerStacks=9 のうち 0..7 を使用)
+            if (bucket < 0) bucket = 0;
+            if (bucket >= kLayerStacks) bucket = kLayerStacks - 1;
+            return bucket;
+        }
+
         const auto stm = pos.side_to_move();
-        const auto f_king = pos.square<KING>(stm);
-        const auto e_king = pos.square<KING>(~stm);
-        const auto f_rank = stm == BLACK ? rank_of(f_king) : rank_of(Inv(f_king));
-        const auto e_rank = stm == BLACK ? rank_of(Inv(e_king)) : rank_of(e_king);
-        int idx = kFToIndex[f_rank] + kEToIndex[e_rank];
-        if (idx < 0) idx = 0;
-        if (idx >= kLayerStacks) idx = kLayerStacks - 1;
-        return idx;
+        const int stm_i = static_cast<int>(stm);
+        const int f_king = static_cast<int>(pos.square<KING>(stm));
+        const int e_king = static_cast<int>(pos.square<KING>(~stm));
+        return static_cast<int>(active_king_pair_bucket_table->v[stm_i][f_king][e_king]);
     }
 #endif
 
@@ -307,7 +561,11 @@ namespace {
 
         alignas(kCacheLineSize) TransformedFeatureType
             transformed_features[FeatureTransformer::kBufferSize];
+#if defined(SFNNwoPSQT)
+        networks().feature_transformer.Transform(pos, transformed_features, refresh, tls_acc_cache);
+#else
         networks().feature_transformer.Transform(pos, transformed_features, refresh);
+#endif
         alignas(kCacheLineSize) char buffer[Network::kBufferSize];
 #if defined(SFNNwoPSQT)
         const auto bucket = stack_index_for_nnue(pos);
@@ -453,6 +711,11 @@ void load_eval() {
 
 		// 評価関数ファイルの読み込みが完了した。
 		eval_loaded = true;
+
+#if defined(SFNNwoPSQT)
+		// eval ロード時にキャッシュを無効化（重みが変わったため）
+		NNUE::InvalidateAccumulatorCaches();
+#endif
     }
 }
 
@@ -462,6 +725,10 @@ void load_eval() {
 // 手番側から見た評価値を返すので注意。(他の評価関数とは設計がこの点において異なる)
 // なので、この関数の最適化は頑張らない。
 Value compute_eval(const Position& pos) {
+#if defined(SFNNwoPSQT)
+    // 新しい局面が設定されたのでキャッシュを無効化
+    NNUE::InvalidateAccumulatorCaches();
+#endif
     return NNUE::ComputeScore(pos, true);
 }
 
@@ -506,7 +773,11 @@ Value evaluate(const Position& pos) {
 
 // 差分計算ができるなら進める
 void evaluate_with_no_return(const Position& pos) {
+#if defined(SFNNwoPSQT)
+    NNUE::UpdateAccumulatorIfPossibleWithCache(pos);
+#else
     NNUE::UpdateAccumulatorIfPossible(pos);
+#endif
 }
 
 // 現在の局面の評価値の内訳を表示する

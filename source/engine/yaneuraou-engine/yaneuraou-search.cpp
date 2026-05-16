@@ -580,17 +580,9 @@ bool YaneuraOuEngine::qsearch_psv(const std::string& inputPath,
 // utility functions
 
 void YaneuraOuEngine::trace_eval() const {
-    StateListPtr trace_states(new std::deque<StateInfo>(1));
-    Position     p;
-#if STOCKFISH
-	p.set(pos.fen(), options["UCI_Chess960"], &trace_states->back());
-#else
-    p.set(pos.sfen(),&trace_states->back());
-#endif
     verify_networks();
-
-    //sync_cout << "\n" << Eval::trace(p, *networks) << sync_endl;
-	// TODO あとで
+    Value score = Eval::evaluate(pos);
+    sync_cout << "eval = " << score << sync_endl;
 }
 
 // 現在の局面の評価値を出力する。

@@ -1,4 +1,4 @@
-﻿#ifndef CONFIG_H_INCLUDED
+#ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
 // ============================================================
@@ -355,6 +355,19 @@
 
 // SFNNwoPSQT型の評価関数を使うときに定義するシンボル。(Makefileのなかで定義している)
 // #define SFNNwoPSQT
+
+// SFNNwoPSQT使用時のレイヤースタック選択バケットモード。(Makefileのなかで定義している)
+//
+// 未定義(デフォルト) : KingRank9
+//   双方の玉の段を3段ずつ区切り 3x3 = 9 バケット。
+//   bullet学習スクリプトの --bucket-mode kingrank9 と対応。
+//
+// SFNNWOP_BUCKET_KINGCOLOR9 : KingColor9
+//   自陣後ろ3段か否か × 玉のマス色(チェス盤市松模様) で 9 バケット。
+//   bullet学習スクリプトの --bucket-mode kingcolor9 と対応。
+//   マス色は sq%2 = (筋番号+段番号)%2 で判定(四つ角=0=白)。
+//   先後反転(Inv)は偶数80を引くだけなのでマス色は不変。
+// #define SFNNWOP_BUCKET_KINGCOLOR9
 
 // ===============================================================
 // ここ以降では、↑↑↑で設定した内容に基づき必要なdefineを行う。

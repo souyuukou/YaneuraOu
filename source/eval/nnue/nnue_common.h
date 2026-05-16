@@ -77,7 +77,11 @@ namespace Eval::NNUE {
 
   // SIMD width (in bytes)
   // SIMD幅（バイト単位）
-  #if defined(USE_AVX2)
+  // 注意: USE_AVX512 が定義されると config.h により USE_AVX2 も自動定義されるため、
+  //       USE_AVX512 を USE_AVX2 より先に判定する必要がある。
+  #if defined(USE_AVX512)
+  constexpr std::size_t kSimdWidth = 64;
+  #elif defined(USE_AVX2)
   constexpr std::size_t kSimdWidth = 32;
   #elif defined(USE_SSE2)
   constexpr std::size_t kSimdWidth = 16;
@@ -89,6 +93,7 @@ namespace Eval::NNUE {
   #elif defined(USE_WASM_SIMD)
   constexpr std::size_t kSimdWidth = 16;
   #endif
+  // 重みファイルのパディング粒度。Stockfish 互換のため AVX-512 でも 32 のまま据え置く。
   constexpr std::size_t kMaxSimdWidth = 32;
 
   // unique number for each piece type on each square

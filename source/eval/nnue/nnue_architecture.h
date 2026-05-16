@@ -47,9 +47,9 @@
 // halfkp_1024x2-8-64型
 #include "architectures/halfkp_1024x2-8-64.h"
 
-#elif defined(YANEURAOU_ENGINE_NNUE_SFNNwoP1536)
+#elif defined(YANEURAOU_ENGINE_NNUE_SFNNwoP1536) || defined(YANEURAOU_ENGINE_NNUE_SFNNwoP1536_KC9)
 
-// SFNN without Psqt 1536型
+// SFNN without Psqt 1536型 (バケットモード: KingRank9 または KingColor9)
 #include "architectures/sfnnwop-1536.h"
 
 #elif defined(EVAL_NNUE_HALFKP_VM_256X2_32_32)
