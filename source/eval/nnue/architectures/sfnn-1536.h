@@ -1,7 +1,7 @@
 ﻿// SFNN without PSQT 1536 architecture
 
-#ifndef CLASSIC_NNUE_SFNNWOP_1536_H_INCLUDED
-#define CLASSIC_NNUE_SFNNWOP_1536_H_INCLUDED
+#ifndef CLASSIC_NNUE_SFNN_1536_H_INCLUDED
+#define CLASSIC_NNUE_SFNN_1536_H_INCLUDED
 
 #include "../features/feature_set.h"
 #include "../features/half_ka_hm2.h"
@@ -90,6 +90,7 @@ struct Network {
 
 	const OutputType* Propagate(const TransformedFeatureType* transformedFeatures, char* buffer) const {
 		auto& buf = *reinterpret_cast<Buffer*>(buffer);
+		std::memset(buf.ac_sqr_0_out, 0, sizeof(buf.ac_sqr_0_out));
 
 		fc_0.Propagate(transformedFeatures, buf.fc_0_out);
 		ac_0.Propagate(buf.fc_0_out, buf.ac_0_out);
@@ -110,4 +111,4 @@ struct Network {
 }  // namespace Eval::NNUE
 }  // namespace YaneuraOu
 
-#endif // CLASSIC_NNUE_SFNNWOP_1536_H_INCLUDED
+#endif // CLASSIC_NNUE_SFNN_1536_H_INCLUDED

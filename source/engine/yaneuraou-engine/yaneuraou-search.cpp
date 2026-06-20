@@ -446,10 +446,6 @@ bool YaneuraOuEngine::qsearch_psv(const std::string& inputPath,
                                   size_t             workerCount,
                                   std::string&       message) {
 
-#if !defined(USE_SFEN_PACKER)
-    message = "qsearch_psv requires USE_SFEN_PACKER.";
-    return false;
-#else
     if (inputPath.empty() || outputPath.empty())
     {
         message = "usage: qsearch_psv input.psv output.psv [workers]";
@@ -574,7 +570,6 @@ bool YaneuraOuEngine::qsearch_psv(const std::string& inputPath,
        << " workers=" << workerCount;
     message = ss.str();
     return total.decodeErrors == 0 && total.illegalPv == 0;
-#endif
 }
 
 // utility functions
@@ -897,7 +892,9 @@ void Search::YaneuraOuWorker::pre_start_searching() {
 
     // 📝 StockfishではThreadPool::start_thinking()で行っているが、
     //     やねうら王では、派生classのpre_start_thinking()以降で行う。
+#if STOCKFISH
     nmpMinPly       = 0;
+#endif
     bestMoveChanges = 0;
     rootDepth = completedDepth = 0;
 
@@ -1854,7 +1851,16 @@ bool Search::YaneuraOuWorker::iterative_deepening() {
             rootMoves[0].score = rootMoves[0].uciScore = lastBestScore;
 
             if (mainThread && lastBestPV[0] != Move::none())
+            {
+#if STOCKFISH
                 uciPvSent = true;
+#else
+                // 前回iterationのPVへロールバックしただけで、そのPVをUSIへ出力したとは限らない。
+                // やねうら王ではPV出力間隔によって途中PVが抑制されるため、ここでtrueにすると
+                // bestmove直前の最終PV出力がスキップされることがある。
+                uciPvSent = false;
+#endif
+            }
         }
         else if (rootMoves[0].pv[0] != lastBestPV[0])
         {
@@ -3210,8 +3216,9 @@ Value YaneuraOuWorker::search(Position& pos, Stack* ss, Value alpha, Value beta,
     // 💡 盤上にpawn以外の駒がある ≒ pawnだけの終盤ではない。
     // 🤔 将棋でもこれに相当する条件が必要かも。
 #endif
-        && ss->ply >= nmpMinPly && !is_loss(beta)
+        && ss->ply >= nmpMinPly
         // 同じ手番側に連続してnull moveを適用しない
+        && !is_loss(beta)
     )
     {
         ASSERT_LV3((ss - 1)->currentMove != Move::null());
@@ -3238,10 +3245,9 @@ Value YaneuraOuWorker::search(Position& pos, Stack* ss, Value alpha, Value beta,
 
         undo_null_move(pos);
 
+        if (nullValue >= beta && !is_win(nullValue))
         // Do not return unproven mate or TB scores
         // 証明されていないmate scoreやTB scoreはreturnで返さない。
-
-        if (nullValue >= beta && !is_win(nullValue))
         {
             // 1手パスしてもbetaを上回りそうであることがわかったので
             // これをもう少しちゃんと検証しなおす。
@@ -3745,7 +3751,7 @@ moves_loop:  // When in check, search starts here
 
             if (value < singularBeta)
             {
-                int corrValAdj   = std::abs(correctionValue) / 210590;
+				int corrValAdj   = std::abs(correctionValue) / 210590;
                 int doubleMargin = -4 + 212 * PvNode - 182 * !ttCapture - corrValAdj
                                  - 906 * ttMoveHistory / 116517 - (ss->ply > rootDepth) * 44;
                 int tripleMargin = 73 + 320 * PvNode - 218 * !ttCapture + 92 * ss->ttPv - corrValAdj
@@ -3754,7 +3760,7 @@ moves_loop:  // When in check, search starts here
                 // 📝 2重延長を制限して探索の組合せ爆発を回避する必要がある。
 
                 extension =
-                  1 + (value < singularBeta - doubleMargin) + (value < singularBeta - tripleMargin);
+                    1 + (value < singularBeta - doubleMargin) + (value < singularBeta - tripleMargin);
 
                 depth++;
             }

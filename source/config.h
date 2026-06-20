@@ -14,7 +14,7 @@
 // ただし、この値を数値として使用することがあるので数値化できる文字列にしておく必要がある。
 #if !defined(ENGINE_VERSION)
 
-#define ENGINE_VERSION "9.30git"
+#define ENGINE_VERSION "9.41git"
 
 #endif
 // --------------------
@@ -188,23 +188,6 @@
 // これを4にすると、1つのTTEntryが64byteになる。いまどきのPCならCPUのcache line sizeが64byteであるため、
 // 速度低下はほぼないはず。
 //#define TT_CLUSTER_SIZE 3
-
-// ---------------------
-//  機械学習関連の設定
-// ---------------------
-
-
-// sfenを256bitにpackする機能、unpackする機能を有効にする。
-// これをdefineするとPosition::packe_sfen(),unpack_sfen()が使えるようになる。
-// ※　機械学習関連で局面の読み書きをする時に使う。
-// #define USE_SFEN_PACKER
-
-
-// 置換表のprobeに必ず失敗する設定
-// ※　 自己生成棋譜からの学習でqsearch()のPVが欲しいときに
-// 置換表にhitして枝刈りされたときにPVが得られないの悔しいので。
-// #define USE_FALSE_PROBE_IN_TT
-
 
 // ---------------------
 //  詰将棋ルーチン関係の設定
@@ -404,7 +387,6 @@ constexpr int MAX_PLY_NUM = 246;
 
 	// 定跡関連コマンド
 	#define ENABLE_MAKEBOOK_CMD
-	#define USE_SFEN_PACKER
 
 	#if defined(YANEURAOU_ENGINE_KPPT) || defined(YANEURAOU_ENGINE_KPP_KKPT) || defined(YANEURAOU_ENGINE_NNUE)
 		#define USE_DIFF_EVAL
@@ -424,8 +406,6 @@ constexpr int MAX_PLY_NUM = 246;
 	//#define USE_DEBUG_ASSERT
 
 	#define ENABLE_TEST_CMD
-	// 学習絡みのオプション
-	#define USE_SFEN_PACKER
 
 	// 定跡生成絡み
 	#define ENABLE_MAKEBOOK_CMD
@@ -543,7 +523,6 @@ constexpr int MAX_PLY_NUM = 246;
 #if defined(FOR_TOURNAMENT)
 	#undef ASSERT_LV
 	#undef ENABLE_TEST_CMD
-	#undef USE_GLOBAL_OPTIONS
 	#undef KEEP_LAST_MOVE
 
 	// 千日手検出を簡略化する
@@ -693,6 +672,10 @@ constexpr bool pretty_jp = false;
 	#define TARGET_CPU "SSSE3"
 	#elif defined(USE_SSE2)
 	#define TARGET_CPU "SSE2"
+	#elif defined(USE_NEON_DOTPROD)
+	#define TARGET_CPU "ARMV8_DOTPROD"
+	#elif defined(USE_NEON)
+	#define TARGET_CPU "ARMV8"
 	#else
 	#define TARGET_CPU "noSSE"
 	#endif
@@ -756,8 +739,6 @@ constexpr bool pretty_jp = false;
 			#define EVAL_TYPE_NAME "ORT_CPU-" EVAL_DEEP
 		#elif defined(ORT_DML)
 			#define EVAL_TYPE_NAME "ORT_DML-" EVAL_DEEP
-		#elif defined(ORT_TRT)
-			#define EVAL_TYPE_NAME "ORT_TRT-" EVAL_DEEP
 		#else
 			#define EVAL_TYPE_NAME "ORT-" EVAL_DEEP
 		#endif

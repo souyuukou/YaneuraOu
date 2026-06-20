@@ -14,7 +14,7 @@
 # YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_32 : NNUE型評価関数(halfkp_1024x2-8-32)
 # YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_64 : NNUE型評価関数(halfkp_1024x2-8-64)
 # YANEURAOU_ENGINE_NNUE_HALFKP_VM_256X2_32_32 : NNUE型評価関数(halfkp_vm_256x2-32-32)
-# YANEURAOU_ENGINE_NNUE_SFNNwoP1536 : SFNN without Psqt 1536 (== SFNNwoPSQT_halfkahm_1536_15_32_ls9)
+# YANEURAOU_ENGINE_SFNN1536 : SFNN without PSQT 1536 (== YANEURAOU_ENGINE_SFNN_halfkahm2_1536_15_32_k3k3)
 # // ⇨ 上記以外のアーキテクチャのNNUE評価関数用のやねうら王をビルドしたい時は、
 # //   やねうら王のビルド手順 - やねうら王 Wiki
 # //   https://github.com/yaneurao/YaneuraOu/wiki/%E3%82%84%E3%81%AD%E3%81%86%E3%82%89%E7%8E%8B%E3%81%AE%E3%83%93%E3%83%AB%E3%83%89%E6%89%8B%E9%A0%86
@@ -37,7 +37,8 @@ YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_32
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_64
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE_HALFKP_VM_256X2_32_32
-#YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE_SFNNwoP1536
+#YANEURAOU_EDITION = YANEURAOU_ENGINE_SFNN1536
+#YANEURAOU_EDITION = YANEURAOU_ENGINE_SFNN_halfkahm2_1536_15_32_k3k3
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_KPPT
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_KPP_KKPT
 #YANEURAOU_EDITION = YANEURAOU_ENGINE_MATERIAL
@@ -53,7 +54,9 @@ YANEURAOU_EDITION = YANEURAOU_ENGINE_NNUE
 # AMDのRyzen(Zen/Zen2)はZEN1/ZEN2を選択するとBMI2命令が使わずに速くなる。(10%程度高速化)
 # Ryzen Zen3シリーズはZEN3を選択。(clang/llvm 13.0.0以降、gcc 11.2以降)
 #
-# ARM系はGraviton2ならGRAVITON2、これ以外ならOTHERを指定する。
+# ARM系は汎用ARMv8ならARMV8、dot product対応ならARMV8_DOTPRODを指定する。
+# Windows ARM64の汎用targetとしてWINARM64も指定できる。WINARM64はARMV8と同等。
+# AWS Graviton2ならGRAVITON2を指定する。
 # Windows x86(32bit環境)用はNO_SSEを指定する。
 #
 # AVX-512対応(サーバー向けSkylake以降)ならAVX512を指定する。
@@ -79,6 +82,9 @@ TARGET_CPU = AVX2
 #TARGET_CPU = ZEN3
 # -- ARMとか
 #TARGET_CPU = OTHER
+#TARGET_CPU = WINARM64
+#TARGET_CPU = ARMV8
+#TARGET_CPU = ARMV8_DOTPROD
 #TARGET_CPU = GRAVITON2
 #TARGET_CPU = WASM
 # -- macOS for Intel
@@ -102,6 +108,19 @@ COMPILER = clang++
 # Python
 # ※ NNUEの未知なarchitectureの時にarchitecture headerを動的に生成するのに用いる。
 PYTHON = python
+
+# YANEURAOU_ENGINE_ 以降を architecture 名として扱う。
+# NNUE_ prefix は任意で、SFNN_* もNNUE系のarchitectureとして解釈する。
+ENGINE_ARCH       := $(patsubst YANEURAOU_ENGINE_%,%,$(YANEURAOU_EDITION))
+ENGINE_ARCH_UPPER := $(shell printf '%s' '$(ENGINE_ARCH)' | tr '[:lower:]' '[:upper:]')
+NNUE_ARCH         := $(shell printf '%s' '$(ENGINE_ARCH)' | sed -E 's/^[Nn][Nn][Uu][Ee]_//')
+NNUE_ARCH_UPPER   := $(shell printf '%s' '$(NNUE_ARCH)' | tr '[:lower:]' '[:upper:]')
+IS_NNUE_EDITION   := $(filter NNUE NNUE_% SFNN%,$(ENGINE_ARCH_UPPER))
+INVALID_ENGINE_ARCH := $(strip $(findstring SFNNWOP,$(ENGINE_ARCH_UPPER)) $(findstring LS9,$(ENGINE_ARCH_UPPER)))
+
+ifneq (,$(INVALID_ENGINE_ARCH))
+$(error Unsupported YANEURAOU_EDITION '$(YANEURAOU_EDITION)'. Use SFNN1536 or SFNN_..._k3k3 / SFNN_..._king3_by_king3)
+endif
 
 # エンジンの表示名 (engine displayname)
 # ("usi"コマンドに対して出力される)
@@ -371,10 +390,6 @@ ifneq (,$(findstring YANEURAOU_ENGINE_DEEP,$(YANEURAOU_EDITION)))
 			CPPFLAGS += -DONNXRUNTIME -DORT_NO_EXCEPTIONS -DORT_DML
 			LDFLAGS += -lonnxruntime
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_DEEP_ORT_TRT)
-			CPPFLAGS += -DONNXRUNTIME -DORT_NO_EXCEPTIONS -DORT_TRT
-			LDFLAGS += -lonnxruntime
-
 		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_DEEP_COREML)
 			CPPFLAGS += -DCOREML
 			LDFLAGS += -framework Foundation -framework CoreML
@@ -400,33 +415,33 @@ ifneq (,$(findstring YANEURAOU_ENGINE_DEEP,$(YANEURAOU_EDITION)))
 
 endif
 
-ifneq (,$(findstring YANEURAOU_ENGINE_NNUE,$(YANEURAOU_EDITION)))
-	ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE)
+ifneq (,$(IS_NNUE_EDITION))
+	ifeq ($(ENGINE_ARCH_UPPER),NNUE)
 	else
-		# YANEURAOU_EDITIONがYANEURAOU_ENGINE_NNUEの後ろに文字が入っている名前なら、これは
-		# 標準NNUE型の亜種なので、とりあえず"YANEURAOU_ENGINE_NNUE"というシンボルを定義してやる。
+		# NNUE_* または SFNN_* は標準NNUE型の亜種なので、とりあえず
+		# "YANEURAOU_ENGINE_NNUE"というシンボルを定義してやる。
 		CPPFLAGS += -DYANEURAOU_ENGINE_NNUE
 
-		ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_KP256)
+		ifeq ($(ENGINE_ARCH_UPPER),NNUE_KP256)
 			CPPFLAGS += -DEVAL_NNUE_KP256
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_HALFKPE9)
+		else ifeq ($(ENGINE_ARCH_UPPER),NNUE_HALFKPE9)
 			CPPFLAGS += -DEVAL_NNUE_HALFKPE9
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_HALFKP_512X2_16_32)
+		else ifeq ($(ENGINE_ARCH_UPPER),NNUE_HALFKP_512X2_16_32)
 			CPPFLAGS += -DEVAL_NNUE_HALFKP_512X2_16_32
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_32)
+		else ifeq ($(ENGINE_ARCH_UPPER),NNUE_HALFKP_1024X2_8_32)
 			CPPFLAGS += -DEVAL_NNUE_HALFKP_1024X2_8_32
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_HALFKP_1024X2_8_64)
+		else ifeq ($(ENGINE_ARCH_UPPER),NNUE_HALFKP_1024X2_8_64)
 			CPPFLAGS += -DEVAL_NNUE_HALFKP_1024X2_8_64
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_HALFKP_VM_256X2_32_32)
+		else ifeq ($(ENGINE_ARCH_UPPER),NNUE_HALFKP_VM_256X2_32_32)
 			CPPFLAGS += -DEVAL_NNUE_HALFKP_VM_256X2_32_32
 
-		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_SFNNwoP1536)
-			CPPFLAGS += -DYANEURAOU_ENGINE_NNUE_SFNNwoP1536
+		else ifeq ($(ENGINE_ARCH_UPPER),SFNN1536)
+			CPPFLAGS += -DYANEURAOU_ENGINE_SFNN1536
 			CPPFLAGS += -DSFNNwoPSQT
 
 		else ifeq ($(YANEURAOU_EDITION),YANEURAOU_ENGINE_NNUE_SFNNwoP1536_V2)
@@ -435,12 +450,12 @@ ifneq (,$(findstring YANEURAOU_ENGINE_NNUE,$(YANEURAOU_EDITION)))
 			CPPFLAGS += -DSFNNwoPSQT_V2
 		else
 			# 知らないNNUEのarchitectureなので、architecture headerを動的に生成する。
-			ARCH_HEADER_FILE = \"architectures/$(subst YANEURAOU_ENGINE_NNUE_,,$(YANEURAOU_EDITION)).h\"
+			ARCH_HEADER_FILE = \"architectures/$(NNUE_ARCH).h\"
 			CPPFLAGS += -DNNUE_ARCHITECTURE_HEADER=$(ARCH_HEADER_FILE)
-			ARCH_GEN_SCRIPT = $(PYTHON) eval/nnue/architectures/nnue_arch_gen.py $(YANEURAOU_EDITION) eval/nnue/architectures
+			ARCH_GEN_SCRIPT = $(PYTHON) eval/nnue/architectures/nnue_arch_gen.py $(NNUE_ARCH) eval/nnue/architectures
 
-			# YANEURAOU_EDITIONに SFNNwoPSQT が含まれていたら、シンボル SFNNwoPSQT 定義しておく。
-			ifneq (,$(findstring YANEURAOU_ENGINE_NNUE_SFNNwoPSQT,$(YANEURAOU_EDITION)))
+			# SFNN_* はPSQTなしSFNNなので、シンボル SFNNwoPSQT 定義しておく。
+			ifneq (,$(filter SFNN%,$(NNUE_ARCH_UPPER)))
 				CPPFLAGS += -DSFNNwoPSQT
 			endif
 		endif
@@ -452,6 +467,7 @@ ifneq (,$(findstring YANEURAOU_ENGINE_NNUE,$(YANEURAOU_EDITION)))
 		eval/nnue/nnue_test_command.cpp                                 \
 		eval/nnue/features/k.cpp                                        \
 		eval/nnue/features/p.cpp                                        \
+		eval/nnue/features/a2.cpp                                       \
 		eval/nnue/features/half_kp.cpp                                  \
 		eval/nnue/features/half_ka1.cpp                                 \
 		eval/nnue/features/half_ka_hm1.cpp                              \
@@ -575,6 +591,15 @@ else ifeq ($(TARGET_CPU),GRAVITON2)
 	# for Amazon Web Servece EC2, the Graviton2 CPU [M6g/M6gd, C6g/C6gd/C6gn, R6g/R6gd, T4g, X2gd] instances
 	# https://github.com/aws/aws-graviton-getting-started/blob/main/c-c++.md
 	CPPFLAGS += -DIS_64BIT -DUSE_NEON=8 -march=armv8.2-a+fp16+rcpc+dotprod+crypto
+else ifeq ($(TARGET_CPU),WINARM64)
+	# Windows ARM64 baseline. Stockfishのarmv8相当。
+	CPPFLAGS += -DIS_64BIT -DUSE_NEON=8
+else ifeq ($(TARGET_CPU),ARMV8)
+	# Generic AArch64 baseline. Stockfishのarmv8相当。
+	CPPFLAGS += -DIS_64BIT -DUSE_NEON=8
+else ifeq ($(TARGET_CPU),ARMV8_DOTPROD)
+	# ARMv8 + Int8 dot product. Stockfishのarmv8-dotprod相当。
+	CPPFLAGS += -DIS_64BIT -DUSE_NEON=8 -DUSE_NEON_DOTPROD -march=armv8.2-a+dotprod
 else ifeq ($(TARGET_CPU),APPLEAVX2)
 	CPPFLAGS += -DIS_64BIT -DUSE_AVX2 -DUSE_BMI2 -target x86_64-apple-macos11 -mbmi -mbmi2 -mavx2 -mpopcnt
 else ifeq ($(TARGET_CPU),APPLESSE42)
