@@ -75,11 +75,16 @@ if arches[0].startswith("SFNN"):
         raise SystemExit(1)
 
     layer_stack_spec = "_".join(arches[5:])
+    is_v2 = False
     if layer_stack_spec == "K3K3" or layer_stack_spec == "KING3_BY_KING3":
         layer_stack_name = "K3K3"
         layer_stack_count = "9"
+    elif layer_stack_spec == "V2":
+        layer_stack_name = "K3K3"
+        layer_stack_count = "9"
+        is_v2 = True
     else:
-        print("Error! : SFNN layer stack must be k3k3 or king3_by_king3")
+        print("Error! : SFNN layer stack must be k3k3, king3_by_king3, or v2")
         raise SystemExit(1)
 
     arches = [arches[1], arches[2], arches[3], arches[4], layer_stack_count]
@@ -327,8 +332,93 @@ else:
 # ============================================================
 
 if SFNN:
-    # `sfnn-1536.h`からそのままコピペ。
-    header += f"""
+    if is_v2:
+        # V2形式: sfnn-1536-v2.h に準拠
+        header += f"""
+        struct Network {{
+
+            // Define network structure
+            // ネットワーク構造の定義
+            Layers::AffineTransformSparseInputExplicit<kInputDims, kHidden1Dims + 1> fc_0;
+            Layers::ClippedReLUExplicit<kHidden1Dims + 1> ac_0;
+            Layers::SqrClippedReLU<kHidden1Dims + 1> ac_sqr_0;
+
+            Layers::AffineTransformExplicit<kHidden1Dims * 2, kHidden2Dims> fc_1;
+            Layers::ClippedReLUExplicit<kHidden2Dims> ac_1;
+            
+            Layers::AffineTransformExplicit<kHidden2Dims, 1> fc_2;
+
+            using OutputType = std::int32_t;
+            static constexpr IndexType kOutputDimensions = 1;
+
+            // Hash値などは適宜実装
+            static constexpr std::uint32_t GetHashValue() {{
+                return 0x6333718Au;
+            }}
+
+            static std::string GetStructureString() {{
+                return "SFNN-{layers[0]}-V2";
+            }}
+
+            Tools::Result ReadParameters(std::istream& stream) {{
+                // V2: scale_weights/permute_weightsなし、標準LEB128読み込み
+                bool result = fc_0.ReadParameters(stream).is_ok()
+                    && ac_0.ReadParameters(stream).is_ok()
+                    && ac_sqr_0.ReadParameters(stream).is_ok()
+                    && fc_1.ReadParameters(stream).is_ok()
+                    && ac_1.ReadParameters(stream).is_ok()
+                    && fc_2.ReadParameters(stream).is_ok();
+                return result ? Tools::ResultCode::Ok : Tools::ResultCode::FileReadError;
+            }}
+
+            bool WriteParameters(std::ostream& stream) const {{
+                return fc_0.WriteParameters(stream)
+                    && ac_0.WriteParameters(stream)
+                    && ac_sqr_0.WriteParameters(stream)
+                    && fc_1.WriteParameters(stream)
+                    && ac_1.WriteParameters(stream)
+                    && fc_2.WriteParameters(stream);
+            }}
+
+            struct alignas(kCacheLineSize) Buffer {{
+                alignas(kCacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
+                alignas(kCacheLineSize) typename decltype(ac_0)::OutputBuffer ac_0_out;
+                alignas(kCacheLineSize) typename decltype(ac_sqr_0)::OutputType ac_sqr_0_out[CeilToMultiple<IndexType>(kHidden1Dims * 2, 32)];
+                alignas(kCacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
+                alignas(kCacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
+                alignas(kCacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
+            }};
+
+            static constexpr std::size_t kBufferSize = sizeof(Buffer);
+
+            const OutputType* Propagate(const TransformedFeatureType* transformedFeatures, char* buffer) const {{
+                auto& buf = *reinterpret_cast<Buffer*>(buffer);
+                std::memset(buf.ac_sqr_0_out, 0, sizeof(buf.ac_sqr_0_out));
+
+                fc_0.Propagate(transformedFeatures, buf.fc_0_out);
+                ac_0.Propagate(buf.fc_0_out, buf.ac_0_out);
+                ac_sqr_0.Propagate(buf.fc_0_out, buf.ac_sqr_0_out);
+                std::memcpy(buf.ac_sqr_0_out + kHidden1Dims, buf.ac_0_out,
+                    kHidden1Dims * sizeof(typename decltype(ac_0)::OutputType));
+                fc_1.Propagate(buf.ac_sqr_0_out, buf.fc_1_out);
+                ac_1.Propagate(buf.fc_1_out, buf.ac_1_out);
+                fc_2.Propagate(buf.ac_1_out, buf.fc_2_out);
+
+                // add shortcut term
+                buf.fc_2_out[0] += buf.fc_0_out[kHidden1Dims];
+
+                return buf.fc_2_out;
+            }}
+        }};
+
+    }}  // namespace Eval::NNUE
+    }}  // namespace YaneuraOu
+
+    #endif // CLASSIC_NNUE_{arch}_H_INCLUDED
+    """
+    else:
+        # V1形式: 既存のsfnn-1536.hに準拠
+        header += f"""
         struct Network {{
 
             // Define network structure

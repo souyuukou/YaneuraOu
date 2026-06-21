@@ -454,10 +454,14 @@ ifneq (,$(IS_NNUE_EDITION))
 			CPPFLAGS += -DNNUE_ARCHITECTURE_HEADER=$(ARCH_HEADER_FILE)
 			ARCH_GEN_SCRIPT = $(PYTHON) eval/nnue/architectures/nnue_arch_gen.py $(NNUE_ARCH) eval/nnue/architectures
 
-			# SFNN_* はPSQTなしSFNNなので、シンボル SFNNwoPSQT 定義しておく。
-			ifneq (,$(filter SFNN%,$(NNUE_ARCH_UPPER)))
-				CPPFLAGS += -DSFNNwoPSQT
-			endif
+		# SFNN_* はPSQTなしSFNNなので、シンボル SFNNwoPSQT 定義しておく。
+		ifneq (,$(filter SFNN%,$(NNUE_ARCH_UPPER)))
+			CPPFLAGS += -DSFNNwoPSQT
+		endif
+		# V2バリアントの場合、SFNNwoPSQT_V2も定義
+		ifneq (,$(findstring _V2,$(NNUE_ARCH_UPPER)))
+			CPPFLAGS += -DSFNNwoPSQT_V2
+		endif
 		endif
 	endif
 
