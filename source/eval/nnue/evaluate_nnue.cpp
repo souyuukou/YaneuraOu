@@ -406,7 +406,8 @@ namespace {
 
 		std::uint32_t hash_value;
 		std::string architecture;
-		Tools::Result result = ReadHeader(stream, &hash_value, &architecture, nullptr);
+		std::uint32_t version = 0;
+		Tools::Result result = ReadHeader(stream, &hash_value, &architecture, &version);
 		if (result.is_not_ok()) return result;
 		if (hash_value != kHashValue) {
 			sync_cout << "info string Warning: NNUE hash mismatch: expected " << kHashValue
@@ -415,20 +416,6 @@ namespace {
 				<< " arch_expected=" << GetArchitectureString()
 				<< sync_endl;
 		}
-
-#if defined(SFNNwoPSQT_V2)
-		// FV_SCALE をアーキテクチャ文字列から自動検出
-		{
-			auto pos = architecture.find("fv_scale=");
-			if (pos != std::string::npos) {
-				int detected = std::atoi(architecture.c_str() + pos + 9);
-				if (detected > 0 && detected <= 128) {
-					FV_SCALE = detected;
-					sync_cout << "info string FV_SCALE auto-detected: " << FV_SCALE << sync_endl;
-				}
-			}
-		}
-#endif
 
 		result = Detail::ReadParameters<FeatureTransformer>(stream, tmp->feature_transformer);
 		if (result.is_not_ok()) {
@@ -482,6 +469,15 @@ namespace {
 #endif
         architecture->resize(size);
         stream.read(&(*architecture)[0], size);
+
+        // 学習側でファイルヘッダーにバケット数(4バイト)を書き込むようになったため、
+        // アーキテクチャ文字列の後に4バイトのバケット数がある場合がある。
+        // バージョンが kVersion より新しければ、バケット数を読み飛ばす。
+        if (version > kVersion) {
+            std::uint32_t bucket_count;
+            stream.read(reinterpret_cast<char*>(&bucket_count), sizeof(bucket_count));
+        }
+
 		return !stream.fail() ? Tools::ResultCode::Ok : Tools::ResultCode::FileReadError;
     }
 
