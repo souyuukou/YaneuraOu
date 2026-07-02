@@ -472,10 +472,23 @@ namespace {
 
         // 学習側でファイルヘッダーにバケット数(4バイト)を書き込むようになったため、
         // アーキテクチャ文字列の後に4バイトのバケット数がある場合がある。
-        // バージョンが kVersion より新しければ、バケット数を読み飛ばす。
-        if (version > kVersion) {
-            std::uint32_t bucket_count;
-            stream.read(reinterpret_cast<char*>(&bucket_count), sizeof(bucket_count));
+        // 次の4バイトをピークし、バケット数(小整数)であれば読み飛ばす。
+        {
+            std::streampos pos = stream.tellg();
+            std::uint32_t peek_val = 0;
+            stream.read(reinterpret_cast<char*>(&peek_val), sizeof(peek_val));
+            if (stream) {
+                // バケット数は kLayerStacks(1〜16 程度) の小整数。
+                // FeatureTransformer ハッシュは通常 0x7Fxxxxxx 等の大きい値。
+                // peek_val が kLayerStacks 以下であればバケット数と判断する。
+                if (peek_val <= static_cast<std::uint32_t>(kLayerStacks)) {
+                    // バケット数を読み飛ばした (seekg は既に進んでいるので何もしない)
+                } else {
+                    // バケット数ではないので戻す
+                    stream.clear();
+                    stream.seekg(pos);
+                }
+            }
         }
 
 		return !stream.fail() ? Tools::ResultCode::Ok : Tools::ResultCode::FileReadError;
