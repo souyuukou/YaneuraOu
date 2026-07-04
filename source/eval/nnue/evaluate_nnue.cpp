@@ -30,14 +30,22 @@ extern int FV_SCALE;
 }
 
 // ============================================================
-//         progress8kpabs バケット選択
+//         progress8kpabs / progress9kpabs / progress32kpabs / progress256kpabs バケット選択
 // ============================================================
 
 #if defined(SFNNwoPSQT)
 namespace {
 
+// progress.bin v2 quantile trailer
+constexpr char kProgressBinTrailerMagic[4] = { 'P', 'R', 'G', 'Q' };
+constexpr std::uint32_t kProgressBinTrailerVersion = 1;
+
+enum class ProgressBinningMode { EqualWidth, Quantile };
+
 // バケットモード
-enum class LSBucketMode { KingRank9, KingColor9, Progress8KPAbs };
+enum class LSBucketMode {
+    KingRank9, KingColor9, Progress8KPAbs, Progress9KPAbs, Progress32KPAbs, Progress256KPAbs
+};
 LSBucketMode ls_bucket_mode = LSBucketMode::KingRank9;
 
 // ルックアップテーブル共通構造体
@@ -107,15 +115,27 @@ static constexpr KingPairBucketIndexTable kKingPairBucketKingColor9 =
 // progress8kpabs で progress.bin 未ロード時は kingrank9 へフォールバックする。
 const KingPairBucketIndexTable* active_king_pair_bucket_table = &kKingPairBucketKingRank9;
 
-// progress8kpabs の重み (81 * fe_old_end floats)
-// progress.bin = f64[81][fe_old_end], 読み込み時に f32 に変換
+// progress8kpabs / progress9kpabs / progress32kpabs / progress256kpabs の重み (81 * fe_old_end floats)
+// progress.bin = f64[81][fe_old_end] (+ 任意 v2 trailer), 読み込み時に f32 に変換
 constexpr int PROGRESS_KP_ABS_NUM_WEIGHTS = 81 * YaneuraOu::Eval::fe_old_end;
 float* progress_kpabs_weights = nullptr;
+ProgressBinningMode progress_binning_mode = ProgressBinningMode::EqualWidth;
+int progress_quantile_num_buckets = 0;
+float* progress_quantile_thresholds = nullptr;
+int progress_quantile_threshold_count = 0;
 
 void set_ls_bucket_mode(const std::string& mode) {
     if (mode == "progress8kpabs") {
         ls_bucket_mode = LSBucketMode::Progress8KPAbs;
-        // progress.bin 未ロード時の互換フォールバック
+        active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+    } else if (mode == "progress9kpabs") {
+        ls_bucket_mode = LSBucketMode::Progress9KPAbs;
+        active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+    } else if (mode == "progress32kpabs") {
+        ls_bucket_mode = LSBucketMode::Progress32KPAbs;
+        active_king_pair_bucket_table = &kKingPairBucketKingRank9;
+    } else if (mode == "progress256kpabs") {
+        ls_bucket_mode = LSBucketMode::Progress256KPAbs;
         active_king_pair_bucket_table = &kKingPairBucketKingRank9;
     } else if (mode == "kingcolor9") {
         ls_bucket_mode = LSBucketMode::KingColor9;
@@ -128,7 +148,7 @@ void set_ls_bucket_mode(const std::string& mode) {
 
 // sigmoid(x)*8 = k となる x の閾値 (k=1..7)
 // x = ln(k / (8-k))
-constexpr float PROGRESS_BUCKET_THRESHOLDS[7] = {
+constexpr float PROGRESS8_BUCKET_THRESHOLDS[7] = {
     -1.9459101f, // ln(1/7)
     -1.0986123f, // ln(2/6)
     -0.5108256f, // ln(3/5)
@@ -138,15 +158,105 @@ constexpr float PROGRESS_BUCKET_THRESHOLDS[7] = {
      1.9459101f, // ln(7/1)
 };
 
-// progress_sum から bucket index (0..7) を計算
-inline int progress_sum_to_bucket(float sum) {
+// sigmoid(x)*9 = k となる x の閾値 (k=1..8)
+// x = ln(k / (9-k))
+constexpr float PROGRESS9_BUCKET_THRESHOLDS[8] = {
+    -2.0794415f, // ln(1/8)
+    -1.2527630f, // ln(2/7)
+    -0.6931472f, // ln(3/6)
+    -0.2231436f, // ln(4/5)
+     0.2231436f, // ln(5/4)
+     0.6931472f, // ln(6/3)
+     1.2527630f, // ln(7/2)
+     2.0794415f, // ln(8/1)
+};
+
+inline float progress_sigmoid(float sum) {
+    return 1.0f / (1.0f + std::exp(-sum));
+}
+
+// progress_sum から bucket index を計算 (progress8/9kpabs: raw sum + 固定閾値)
+template <std::size_t N>
+inline int progress_sum_to_bucket(float sum, const float (&thresholds)[N]) {
     int bucket = 0;
-    for (auto t : PROGRESS_BUCKET_THRESHOLDS)
+    for (auto t : thresholds)
         if (sum >= t) bucket++;
     return bucket;
 }
 
-// progress8kpabs の重み付き和を全駒スキャンで計算
+// p ∈ [0,1] を等幅 N-bucket に割当 (tatara equal_width_bucket)
+inline int equal_width_progress_bucket(float p, int num_buckets) {
+    const int raw = static_cast<int>(std::floor(p * static_cast<float>(num_buckets)));
+    if (raw < 0) return 0;
+    if (raw >= num_buckets) return num_buckets - 1;
+    return raw;
+}
+
+// 等頻度閾値で p を bucket へ (tatara quantile_bucket)
+inline int quantile_progress_bucket(float p, int num_buckets) {
+    int bucket = 0;
+    for (int i = 0; i < progress_quantile_threshold_count; ++i)
+        if (p >= progress_quantile_thresholds[i]) bucket++;
+    if (bucket < 0) bucket = 0;
+    if (bucket >= num_buckets) bucket = num_buckets - 1;
+    return bucket;
+}
+
+void clear_progress_quantile_thresholds() {
+    delete[] progress_quantile_thresholds;
+    progress_quantile_thresholds = nullptr;
+    progress_quantile_threshold_count = 0;
+    progress_quantile_num_buckets = 0;
+    progress_binning_mode = ProgressBinningMode::EqualWidth;
+}
+
+bool parse_progress_bin_trailer(const char* trailer, std::size_t trailer_len) {
+    constexpr std::size_t kTrailerHeaderBytes = 12;
+    if (trailer_len < kTrailerHeaderBytes)
+        return false;
+    if (std::memcmp(trailer, kProgressBinTrailerMagic, 4) != 0)
+        return false;
+
+    std::uint32_t version = 0;
+    std::memcpy(&version, trailer + 4, sizeof(version));
+    if (version != kProgressBinTrailerVersion)
+        return false;
+
+    std::uint32_t num_buckets_u32 = 0;
+    std::memcpy(&num_buckets_u32, trailer + 8, sizeof(num_buckets_u32));
+    const int num_buckets = static_cast<int>(num_buckets_u32);
+    if (num_buckets < 2 || num_buckets > 256)
+        return false;
+
+    const std::size_t expected_trailer_len =
+        kTrailerHeaderBytes + static_cast<std::size_t>(num_buckets - 1) * sizeof(float);
+    if (trailer_len != expected_trailer_len)
+        return false;
+
+    auto* thresholds = new float[num_buckets - 1];
+    std::memcpy(thresholds, trailer + kTrailerHeaderBytes, (num_buckets - 1) * sizeof(float));
+
+    for (int i = 0; i < num_buckets - 1; ++i) {
+        const float t = thresholds[i];
+        if (t <= 0.0f || t >= 1.0f) {
+            delete[] thresholds;
+            return false;
+        }
+        if (i > 0 && t <= thresholds[i - 1]) {
+            delete[] thresholds;
+            return false;
+        }
+    }
+
+    clear_progress_quantile_thresholds();
+    progress_binning_mode = ProgressBinningMode::Quantile;
+    progress_quantile_num_buckets = num_buckets;
+    progress_quantile_thresholds = thresholds;
+    progress_quantile_threshold_count = num_buckets - 1;
+    return true;
+}
+
+// progress8kpabs / progress9kpabs / progress32kpabs の重み付き和を全駒スキャンで計算
 float compute_progress8kpabs_sum(const YaneuraOu::Position& pos) {
     using namespace YaneuraOu;
     using namespace YaneuraOu::Eval;
@@ -169,47 +279,83 @@ float compute_progress8kpabs_sum(const YaneuraOu::Position& pos) {
 // progress8kpabs バケット計算
 int compute_progress8kpabs_bucket(const YaneuraOu::Position& pos) {
     float sum = compute_progress8kpabs_sum(pos);
-    return progress_sum_to_bucket(sum);
+    return progress_sum_to_bucket(sum, PROGRESS8_BUCKET_THRESHOLDS);
 }
 
-// progress.bin を読み込む (f64[81][fe_old_end] -> f32)
+// progress9kpabs バケット計算
+int compute_progress9kpabs_bucket(const YaneuraOu::Position& pos) {
+    float sum = compute_progress8kpabs_sum(pos);
+    return progress_sum_to_bucket(sum, PROGRESS9_BUCKET_THRESHOLDS);
+}
+
+// progress32kpabs / progress256kpabs バケット計算 (v2 等頻度 or v1 等幅フォールバック)
+int compute_progress_quantile_kpabs_bucket(const YaneuraOu::Position& pos) {
+    using namespace YaneuraOu::Eval::NNUE;
+    const float sum = compute_progress8kpabs_sum(pos);
+    const float p = progress_sigmoid(sum);
+    const int num_buckets = kLayerStacks;
+
+    if (progress_binning_mode == ProgressBinningMode::Quantile) {
+        if (progress_quantile_num_buckets != num_buckets) {
+            sync_cout << "info string Warning: progress.bin quantile num_buckets="
+                      << progress_quantile_num_buckets
+                      << " does not match LayerStacks=" << num_buckets << sync_endl;
+        }
+        return quantile_progress_bucket(p, num_buckets);
+    }
+    return equal_width_progress_bucket(p, num_buckets);
+}
+
+// progress.bin を読み込む (f64[81][fe_old_end] -> f32, 任意 v2 trailer)
 bool load_progress_bin(const std::string& path) {
     using namespace YaneuraOu;
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) return false;
 
-    const size_t expected_bytes = PROGRESS_KP_ABS_NUM_WEIGHTS * sizeof(double);
-    // ファイルサイズチェック
+    const size_t weight_bytes = PROGRESS_KP_ABS_NUM_WEIGHTS * sizeof(double);
     ifs.seekg(0, std::ios::end);
-    auto file_size = ifs.tellg();
+    const auto file_size = static_cast<std::size_t>(ifs.tellg());
     ifs.seekg(0, std::ios::beg);
-    if (file_size != static_cast<std::streamoff>(expected_bytes)) {
-        sync_cout << "info string progress.bin size mismatch: got " << file_size
-                  << " bytes, expected " << expected_bytes << sync_endl;
+    if (file_size < weight_bytes) {
+        sync_cout << "info string progress.bin too short: got " << file_size
+                  << " bytes, need at least " << weight_bytes << sync_endl;
         return false;
     }
 
-    // 既存の重みを解放
+    std::vector<char> file_data(file_size);
+    ifs.read(file_data.data(), static_cast<std::streamsize>(file_size));
+    if (!ifs) {
+        sync_cout << "info string progress.bin read error" << sync_endl;
+        return false;
+    }
+
     delete[] progress_kpabs_weights;
     progress_kpabs_weights = new float[PROGRESS_KP_ABS_NUM_WEIGHTS];
 
-    // f64 で読み込んで f32 に変換
     for (int i = 0; i < PROGRESS_KP_ABS_NUM_WEIGHTS; ++i) {
-        double val;
-        ifs.read(reinterpret_cast<char*>(&val), sizeof(double));
+        double val = 0.0;
+        std::memcpy(&val, file_data.data() + i * sizeof(double), sizeof(double));
         progress_kpabs_weights[i] = static_cast<float>(val);
     }
 
-    if (!ifs) {
-        sync_cout << "info string progress.bin read error" << sync_endl;
-        delete[] progress_kpabs_weights;
-        progress_kpabs_weights = nullptr;
-        return false;
+    clear_progress_quantile_thresholds();
+    if (file_size > weight_bytes) {
+        const char* trailer = file_data.data() + weight_bytes;
+        const std::size_t trailer_len = file_size - weight_bytes;
+        if (!parse_progress_bin_trailer(trailer, trailer_len)) {
+            sync_cout << "info string Warning: progress.bin v2 trailer parse failed" << sync_endl;
+            delete[] progress_kpabs_weights;
+            progress_kpabs_weights = nullptr;
+            return false;
+        }
+        sync_cout << "info string loaded progress.bin (quantile): "
+                  << PROGRESS_KP_ABS_NUM_WEIGHTS << " weights, num_buckets="
+                  << progress_quantile_num_buckets << " from " << path << sync_endl;
+    } else {
+        sync_cout << "info string loaded progress.bin (equal-width): "
+                  << PROGRESS_KP_ABS_NUM_WEIGHTS << " weights from " << path << sync_endl;
     }
-
-    sync_cout << "info string loaded progress.bin: " << PROGRESS_KP_ABS_NUM_WEIGHTS
-              << " weights from " << path << sync_endl;
     return true;
 }
 
@@ -417,6 +563,32 @@ namespace {
 				<< sync_endl;
 		}
 
+#if defined(SFNNwoPSQT_V2)
+		if (version >= 0x7AF32F20u) {
+			std::uint32_t num_buckets_in_file = 0;
+			stream.read(reinterpret_cast<char*>(&num_buckets_in_file), sizeof(num_buckets_in_file));
+			if (!stream) return Tools::ResultCode::FileReadError;
+			if (static_cast<int>(num_buckets_in_file) != kLayerStacks) {
+				sync_cout << "info string Warning: NNUE num_buckets mismatch: expected "
+					<< kLayerStacks << " got " << num_buckets_in_file << sync_endl;
+			} else {
+				sync_cout << "info string NNUE num_buckets=" << num_buckets_in_file << sync_endl;
+			}
+		}
+
+		// FV_SCALE をアーキテクチャ文字列から自動検出
+		{
+			auto pos = architecture.find("fv_scale=");
+			if (pos != std::string::npos) {
+				int detected = std::atoi(architecture.c_str() + pos + 9);
+				if (detected > 0 && detected <= 128) {
+					FV_SCALE = detected;
+					sync_cout << "info string FV_SCALE auto-detected: " << FV_SCALE << sync_endl;
+				}
+			}
+		}
+#endif
+
 		result = Detail::ReadParameters<FeatureTransformer>(stream, tmp->feature_transformer);
 		if (result.is_not_ok()) {
 			sync_cout << "info string NNUE feature params read failed: " << result.to_string() << sync_endl;
@@ -470,26 +642,24 @@ namespace {
         architecture->resize(size);
         stream.read(&(*architecture)[0], size);
 
+#if !defined(SFNNwoPSQT_V2) || version < 0x7AF32F20u
         // 学習側でファイルヘッダーにバケット数(4バイト)を書き込むようになったため、
         // アーキテクチャ文字列の後に4バイトのバケット数がある場合がある。
-        // 次の4バイトをピークし、バケット数(小整数)であれば読み飛ばす。
+        // SFNNwoPSQT_V2 かつ version >= 0x7AF32F20 の場合は LoadAndShare 側で読み込む。
         {
             std::streampos pos = stream.tellg();
             std::uint32_t peek_val = 0;
             stream.read(reinterpret_cast<char*>(&peek_val), sizeof(peek_val));
             if (stream) {
-                // バケット数は kLayerStacks(1〜16 程度) の小整数。
-                // FeatureTransformer ハッシュは通常 0x7Fxxxxxx 等の大きい値。
-                // peek_val が kLayerStacks 以下であればバケット数と判断する。
                 if (peek_val <= static_cast<std::uint32_t>(kLayerStacks)) {
-                    // バケット数を読み飛ばした (seekg は既に進んでいるので何もしない)
+                    sync_cout << "info string NNUE num_buckets=" << peek_val << sync_endl;
                 } else {
-                    // バケット数ではないので戻す
                     stream.clear();
                     stream.seekg(pos);
                 }
             }
         }
+#endif
 
 		return !stream.fail() ? Tools::ResultCode::Ok : Tools::ResultCode::FileReadError;
     }
@@ -540,14 +710,31 @@ namespace {
     // レイヤースタックの選択。
     // kingrank9   : 双方の玉の段に応じて9通りに分岐させる。
     // kingcolor9  : 自陣後ろ3段か否か × 玉のマス色(市松模様)で9通りに分岐させる。
-    // progress8kpabs: KP-absolute 進行度に応じて8通りに分岐させる。
+    // progress8kpabs  : KP-absolute 進行度に応じて8通りに分岐させる。
+    // progress9kpabs  : 同様に9通り (0..8) に分岐させる。
+    // progress32kpabs / progress256kpabs : sigmoid 後に等幅 or 等頻度で分岐。
     //
     // kingrank9 / kingcolor9 はルックアップテーブルで高速化。
     // 後手番のとき両玉を Inv(sq)=80-sq で先手視点に正規化してテーブルを共用する。
     static int stack_index_for_nnue(const Position& pos) {
+        if ((ls_bucket_mode == LSBucketMode::Progress32KPAbs
+                || ls_bucket_mode == LSBucketMode::Progress256KPAbs)
+            && progress_kpabs_weights != nullptr) {
+            int bucket = compute_progress_quantile_kpabs_bucket(pos);
+            if (bucket < 0) bucket = 0;
+            if (bucket >= kLayerStacks) bucket = kLayerStacks - 1;
+            return bucket;
+        }
+
+        if (ls_bucket_mode == LSBucketMode::Progress9KPAbs && progress_kpabs_weights != nullptr) {
+            int bucket = compute_progress9kpabs_bucket(pos);
+            if (bucket < 0) bucket = 0;
+            if (bucket >= kLayerStacks) bucket = kLayerStacks - 1;
+            return bucket;
+        }
+
         if (ls_bucket_mode == LSBucketMode::Progress8KPAbs && progress_kpabs_weights != nullptr) {
             int bucket = compute_progress8kpabs_bucket(pos);
-            // progress8kpabs は 0..7 の 8バケット (LayerStacks=9 のうち 0..7 を使用)
             if (bucket < 0) bucket = 0;
             if (bucket >= kLayerStacks) bucket = kLayerStacks - 1;
             return bucket;

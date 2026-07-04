@@ -448,6 +448,12 @@ string config_info()
 		"sfnn-1536";
 	#elif defined(YANEURAOU_ENGINE_SFNN1536_V2)
         "sfnn-1536-v2";
+	#elif defined(YANEURAOU_ENGINE_SFNN768_V2)
+		"sfnn-768-v2";
+	#elif defined(YANEURAOU_ENGINE_SFNN768_V2_LS32)
+		"sfnn-768-v2-ls32";
+	#elif defined(YANEURAOU_ENGINE_SFNN768_V2_LS256)
+		"sfnn-768-v2-ls256";
 	#elif defined(EVAL_NNUE_HALFKP_VM_256X2_32_32)
 		"halfkpvm_256x2_32_32";
 	#else

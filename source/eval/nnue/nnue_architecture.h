@@ -47,15 +47,27 @@
 // halfkp_1024x2-8-64型
 #include "architectures/halfkp_1024x2-8-64.h"
 
-#elif defined(YANEURAOU_ENGINE_NNUE_SFNN1536) || defined(YANEURAOU_ENGINE_NNUE_SFNN1536_KC9)
+#elif defined(YANEURAOU_ENGINE_SFNN1536) || defined(YANEURAOU_ENGINE_SFNN1536_KC9)
 
 // SFNN without Psqt 1536型 (バケットモード: KingRank9 または KingColor9)
 #include "architectures/sfnn-1536.h"
 
-#elif defined(YANEURAOU_ENGINE_NNUE_SFNN1536) || defined(YANEURAOU_ENGINE_NNUE_SFNN1536_KC9)
+#elif defined(YANEURAOU_ENGINE_SFNN1536_V2)
 
-// SFNN 1536_v2型 (バケットモード: progress8kpabs)
+// SFNN 1536_v2型 (rshogi/nnue-pytorch 互換)
 #include "architectures/sfnn-1536-v2.h"
+
+#elif defined(YANEURAOU_ENGINE_SFNN768_V2)
+
+#include "architectures/sfnn-768-v2.h"
+
+#elif defined(YANEURAOU_ENGINE_SFNN768_V2_LS32)
+
+#include "architectures/sfnn-768-v2-ls32.h"
+
+#elif defined(YANEURAOU_ENGINE_SFNN768_V2_LS256)
+
+#include "architectures/sfnn-768-v2-ls256.h"
 
 #elif defined(EVAL_NNUE_HALFKP_VM_256X2_32_32)
 
