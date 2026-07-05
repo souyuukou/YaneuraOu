@@ -290,6 +290,7 @@ int compute_progress9kpabs_bucket(const YaneuraOu::Position& pos) {
 
 // progress32kpabs / progress256kpabs バケット計算 (v2 等頻度 or v1 等幅フォールバック)
 int compute_progress_quantile_kpabs_bucket(const YaneuraOu::Position& pos) {
+    using namespace YaneuraOu;
     using namespace YaneuraOu::Eval::NNUE;
     const float sum = compute_progress8kpabs_sum(pos);
     const float p = progress_sigmoid(sum);
@@ -642,10 +643,9 @@ namespace {
         architecture->resize(size);
         stream.read(&(*architecture)[0], size);
 
-#if !defined(SFNNwoPSQT_V2) || version < 0x7AF32F20u
-        // 学習側でファイルヘッダーにバケット数(4バイト)を書き込むようになったため、
-        // アーキテクチャ文字列の後に4バイトのバケット数がある場合がある。
-        // SFNNwoPSQT_V2 かつ version >= 0x7AF32F20 の場合は LoadAndShare 側で読み込む。
+#if !defined(SFNNwoPSQT_V2)
+        // 非V2: アーキテクチャ文字列直後の num_buckets(4バイト)を読み飛ばす。
+        // V2 かつ version >= 0x7AF32F20 の場合は LoadAndShare 側で読み込む。
         {
             std::streampos pos = stream.tellg();
             std::uint32_t peek_val = 0;
