@@ -565,7 +565,9 @@ namespace {
 		}
 
 #if defined(SFNNwoPSQT_V2)
-		if (version >= 0x7AF32F20u) {
+		// 0x7AF32F20: arch 直後は FT ヘッダ（num_buckets なし、LayerStacks=9 想定）
+		// 0x7AF32F21+: arch 直後に num_buckets (uint32) が入る
+		if (version >= 0x7AF32F21u) {
 			std::uint32_t num_buckets_in_file = 0;
 			stream.read(reinterpret_cast<char*>(&num_buckets_in_file), sizeof(num_buckets_in_file));
 			if (!stream) return Tools::ResultCode::FileReadError;
@@ -645,7 +647,7 @@ namespace {
 
 #if !defined(SFNNwoPSQT_V2)
         // 非V2: アーキテクチャ文字列直後の num_buckets(4バイト)を読み飛ばす。
-        // V2 かつ version >= 0x7AF32F20 の場合は LoadAndShare 側で読み込む。
+        // V2 かつ version >= 0x7AF32F21 の場合は LoadAndShare 側で読み込む。
         {
             std::streampos pos = stream.tellg();
             std::uint32_t peek_val = 0;
