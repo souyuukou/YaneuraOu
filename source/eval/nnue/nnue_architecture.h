@@ -69,6 +69,11 @@
 
 #include "architectures/sfnn-768-v2-ls256.h"
 
+#elif defined(YANEURAOU_ENGINE_SFNN2048_V2)
+
+// SFNN 2048_v2型 (2048-15-64, 9 LayerStacks)
+#include "architectures/sfnn-2048-v2.h"
+
 #elif defined(EVAL_NNUE_HALFKP_VM_256X2_32_32)
 
 // halfkpvm_256x2-32-32型

@@ -18,6 +18,7 @@
 # YANEURAOU_ENGINE_SFNN768_V2 : SFNN 768 V2, 9 LayerStacks (tatara / rshogi compatible)
 # YANEURAOU_ENGINE_SFNN768_V2_LS32 : SFNN 768 V2, 32 LayerStacks
 # YANEURAOU_ENGINE_SFNN768_V2_LS256 : SFNN 768 V2, 256 LayerStacks
+# YANEURAOU_ENGINE_SFNN2048_V2 : SFNN 2048 V2, 2048-15-64, 9 LayerStacks
 # // ⇨ 上記以外のアーキテクチャのNNUE評価関数用のやねうら王をビルドしたい時は、
 # //   やねうら王のビルド手順 - やねうら王 Wiki
 # //   https://github.com/yaneurao/YaneuraOu/wiki/%E3%82%84%E3%81%AD%E3%81%86%E3%82%89%E7%8E%8B%E3%81%AE%E3%83%93%E3%83%AB%E3%83%89%E6%89%8B%E9%A0%86
@@ -475,6 +476,12 @@ ifneq (,$(IS_NNUE_EDITION))
 		else ifeq ($(ENGINE_ARCH_UPPER),SFNN768_V2_LS256)
 			CPPFLAGS += -DYANEURAOU_ENGINE_SFNN768_V2_LS256
 			CPPFLAGS += -DNNUE_ARCHITECTURE_HEADER=\"architectures/sfnn-768-v2-ls256.h\"
+			CPPFLAGS += -DSFNNwoPSQT
+			CPPFLAGS += -DSFNNwoPSQT_V2
+
+		else ifeq ($(ENGINE_ARCH_UPPER),SFNN2048_V2)
+			CPPFLAGS += -DYANEURAOU_ENGINE_SFNN2048_V2
+			CPPFLAGS += -DNNUE_ARCHITECTURE_HEADER=\"architectures/sfnn-2048-v2.h\"
 			CPPFLAGS += -DSFNNwoPSQT
 			CPPFLAGS += -DSFNNwoPSQT_V2
 
