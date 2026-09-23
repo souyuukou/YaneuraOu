@@ -98,6 +98,10 @@ UCIEngine::UCIEngine(int argc, char** argv) :
 void USIEngine::set_engine(IEngine& _engine) {
     engine.set_engine(_engine);
 
+    // "engine_option_profile.txt"で、どのオプション群を生やすかを決める。
+    // これは"usi"応答より前に反映される必要がある。
+    engine.get_options().read_engine_option_profile("engine_option_profile.txt");
+
     // ⚠ やねうら王では、Engineのコンストラクタではoptionを生やさない設計に変更した。
     //     よって、派生classのadd_options()をここで明示的に呼び出してoptionを生やす必要がある。
     engine.add_options();
@@ -115,6 +119,12 @@ void USIEngine::set_engine(IEngine& _engine) {
         if (str.has_value())
             print_info_string(*str);
     });
+
+#if defined(ENGINE_OPTIONS)
+    // 🌈 ENGINE_OPTIONSマクロで指定されたエンジンオプションを反映させる。
+    //     上書き対象のオプションがすべて生えたあとに行う必要があるので、ここで呼び出す。
+    engine.get_options().set_engine_options(ENGINE_OPTIONS);
+#endif
 
     // 📝 セットされたEngineに対してlisterを設定する必要がある。
     //     Stockfishは、USIEngineのコンストラクタで行っているが、
@@ -1796,30 +1806,45 @@ std::string USIEngine::value(Value v)
 
 
 
+#endif
+
 #if defined(__EMSCRIPTEN__)
 // --------------------
 // EMSCRIPTEN support
 // --------------------
-static StateListPtr states(new StateList(1));
+
+namespace {
+// wasm_keep_alive()で保持するインスタンス。プロセス終了まで解放しない。(理由はusi.hを参照)
+std::unique_ptr<IEngine>   wasm_engine;
+std::unique_ptr<USIEngine> wasm_usi;
+}  // namespace
+
+void wasm_keep_alive(std::unique_ptr<IEngine> engine, std::unique_ptr<USIEngine> usi) {
+    wasm_engine = std::move(engine);
+    wasm_usi    = std::move(usi);
+}
+
+USIEngine* wasm_usi_instance() { return wasm_usi.get(); }
+
+int USIEngine::exec_command_from_js(const std::string& cmd) {
+    // 💡 usi_cmdexec()の戻り値("quit"ならtrue)は使わない。
+    //     "quit"はwasm_pre.jsが先にModule.terminate()で処理するため、ここには届かない。
+    usi_cmdexec(cmd);
+
+    return 0;
+}
 
 // USI応答部 emscriptenインターフェース
-EMSCRIPTEN_KEEPALIVE extern "C" int usi_command(const char *c_cmd) {
-	std::string cmd(c_cmd);
+// 💡 wasm_pre.jsからModule.ccall("usi_command", ...)で呼び出される。
+EMSCRIPTEN_KEEPALIVE extern "C" int usi_command(const char* c_cmd) {
+    USIEngine* usi = wasm_usi_instance();
 
-	static Position pos;
-	string token;
+    // engine_main()が未実行。JS側に再送してもらう。
+    if (usi == nullptr)
+        return 1;
 
-	for (Thread* th : Threads) {
-		if (!th->threadStarted)
-			return 1;
-	}
-
-	usi_cmdexec(pos, states, cmd);
-
-	return 0;
+    return usi->exec_command_from_js(std::string(c_cmd));
 }
-#endif
-
 #endif
 
 } // namespace YaneuraOu

@@ -124,6 +124,11 @@ private:
 	std::string model_architecture;
 };
 
+#if defined(ENABLE_NN_CACHE)
+// NN推論結果cacheの容量指定。0なら無効。
+void SetDnnCacheSize(size_t capacity);
+#endif
+
 // leaf nodeまでに辿ったNodeを記録しておく構造体。
 // ※　dlshogiではtrajectory_t
 struct NodeTrajectory {
@@ -164,6 +169,10 @@ struct BatchElement {
 
 #if defined(USE_POLICY_BOOK)
 	HASH_KEY key;       // この局面のhash key
+#endif
+
+#if defined(ENABLE_NN_CACHE)
+	Key policy_value_cache_key; // NN推論結果cache用。HASH_KEY_BITSに応じたKey型。
 #endif
 
 	// 通常の探索では、このポインターはNodeVisitor::value_win を指している。
@@ -284,7 +293,7 @@ private:
 	ChildNumType SelectMaxUcbChild(ChildNode* parent, Node* current);
 
 	// Evaluateを呼び出すリスト(queue)に追加する。
-	void QueuingNode(const Position* pos, Node* node, float* value_win);
+	bool QueuingNode(const Position* pos, Node* node, float* value_win);
 
 	// ノードを評価
 	void EvalNode();

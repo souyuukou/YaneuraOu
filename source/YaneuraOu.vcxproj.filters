@@ -154,6 +154,9 @@
     <ClInclude Include="eval\nnue\features\index_list.h">
       <Filter>リソース ファイル\eval\nnue\features</Filter>
     </ClInclude>
+    <ClInclude Include="eval\nnue\features\a2.h">
+      <Filter>リソース ファイル\eval\nnue\features</Filter>
+    </ClInclude>
     <ClInclude Include="eval\nnue\features\k.h">
       <Filter>リソース ファイル\eval\nnue\features</Filter>
     </ClInclude>
@@ -319,6 +322,9 @@
     <ClInclude Include="engine\dlshogi-engine\Node.h">
       <Filter>リソース ファイル\engine\dlshogi-engine</Filter>
     </ClInclude>
+    <ClInclude Include="engine\dlshogi-engine\PolicyValueCache.h">
+      <Filter>リソース ファイル\engine\dlshogi-engine</Filter>
+    </ClInclude>
     <ClInclude Include="engine\dlshogi-engine\PrintInfo.h">
       <Filter>リソース ファイル\engine\dlshogi-engine</Filter>
     </ClInclude>
@@ -419,6 +425,9 @@
       <Filter>リソース ファイル\eval\nnue\features</Filter>
     </ClCompile>
     <ClCompile Include="eval\nnue\features\half_relative_kp.cpp">
+      <Filter>リソース ファイル\eval\nnue\features</Filter>
+    </ClCompile>
+    <ClCompile Include="eval\nnue\features\a2.cpp">
       <Filter>リソース ファイル\eval\nnue\features</Filter>
     </ClCompile>
     <ClCompile Include="eval\nnue\features\k.cpp">

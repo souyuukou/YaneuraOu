@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <iosfwd>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "types.h"
@@ -37,7 +38,17 @@ public:
 
 	// main threadをUSIメッセージの受信のために待機させる。
 	// "quit"コマンドが送られてくるまでこのループは抜けない。
+	// 📝 wasmではブラウザのメインスレッドをブロックできないため、この関数は何もしない。
+	//     代わりにwasm_pre.jsからusi_command()経由でexec_command_from_js()が呼び出される。
 	void loop();
+
+#if defined(__EMSCRIPTEN__)
+	// yaneuraou.wasm : JS側から渡されたUSIコマンドを1つ実行する。
+	// 戻り値はそのままwasm_pre.jsに返る。
+	//   0 : 受理した。
+	//   1 : まだ実行できない。あとで再送してもらう。
+	int exec_command_from_js(const std::string& cmd);
+#endif
 
 	// --------------------
 	// USI関係の記法変換部
@@ -240,6 +251,26 @@ private:
 
 #endif
 };
+
+#if defined(__EMSCRIPTEN__)
+// --------------------
+// 🌈 yaneuraou.wasm 用のヘルパー 🌈
+// --------------------
+
+/*
+	📝 wasmではUSIEngine::loop()が即座にreturnするので、各エンジンのentry pointである
+	    engine_main()もすぐに抜ける。engine_main()はEngineとUSIEngineを
+	    std::unique_ptrのlocal変数として持っているため、そのまま抜けると両者が解体され、
+	    以後JS側からusi_command()を呼んでも実体が無い。
+	    (解体時にThread::~Thread()がjoinするため、メインスレッドが停止する危険もある。)
+
+	    そこでengine_main()の末尾でこの関数にmoveし、プロセス終了までインスタンスを保持する。
+*/
+void wasm_keep_alive(std::unique_ptr<IEngine> engine, std::unique_ptr<USIEngine> usi);
+
+// wasm_keep_alive()で保持しているUSIEngineを返す。未登録ならnullptr。
+USIEngine* wasm_usi_instance();
+#endif
 
 } // namespace YaneuraOu
 

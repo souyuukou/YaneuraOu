@@ -496,6 +496,7 @@
     <ClInclude Include="engine\dlshogi-engine\FukauraOuEngine.h" />
     <ClInclude Include="engine\dlshogi-engine\misc\fastmath.h" />
     <ClInclude Include="engine\dlshogi-engine\Node.h" />
+    <ClInclude Include="engine\dlshogi-engine\PolicyValueCache.h" />
     <ClInclude Include="engine\dlshogi-engine\PrintInfo.h" />
     <ClInclude Include="engine\dlshogi-engine\PvMateSearch.h" />
     <ClInclude Include="engine\dlshogi-engine\SearchOptions.h" />
@@ -533,6 +534,7 @@
     <ClInclude Include="eval\nnue\features\half_kp_vm.h" />
     <ClInclude Include="eval\nnue\features\half_relative_kp.h" />
     <ClInclude Include="eval\nnue\features\index_list.h" />
+    <ClInclude Include="eval\nnue\features\a2.h" />
     <ClInclude Include="eval\nnue\features\k.h" />
     <ClInclude Include="eval\nnue\features\p.h" />
     <ClInclude Include="eval\nnue\features\pe9.h" />
@@ -620,6 +622,7 @@
     <ClCompile Include="eval\nnue\features\half_kpe9.cpp" />
     <ClCompile Include="eval\nnue\features\half_kp_vm.cpp" />
     <ClCompile Include="eval\nnue\features\half_relative_kp.cpp" />
+    <ClCompile Include="eval\nnue\features\a2.cpp" />
     <ClCompile Include="eval\nnue\features\k.cpp" />
     <ClCompile Include="eval\nnue\features\p.cpp" />
     <ClCompile Include="eval\nnue\features\pe9.cpp" />

@@ -366,22 +366,63 @@ std::ostream& operator<<(std::ostream& os, const OptionsMap& om) {
 	// 評価関数を読み込んだかのフラグ。これはevaldirの変更にともなってfalseにする。
 	bool load_eval_finished = false;
 
-	// エンジンオプションをコンパイル時に設定する機能
-	// "ENGINE_OPTIONS"で指定した内容を設定する。
-	// 例) #define ENGINE_OPTIONS "FV_SCALE=24;BookFile=no_book"
-	void set_engine_options(const std::string& options)
-	{
-		// ";"で区切って複数指定できるものとする。
-		auto v = StringExtension::Split(options, ";");
-		for (auto line : v)
-			build_option(std::string(line));
-	}
-
 #endif
+
+// エンジンオプションをコンパイル時に設定する機能
+// "ENGINE_OPTIONS"で指定した内容を設定する。
+// 例) #define ENGINE_OPTIONS "FV_SCALE=24;BookFile=no_book"
+// 📝 USIEngine::set_engine()から、すべてのオプションが生えたあとに呼び出される。
+void OptionsMap::set_engine_options(const std::string& options)
+{
+	// ";"で区切って複数指定できるものとする。
+	auto v = StringExtension::Split(options, ";");
+	for (auto line : v)
+		build_option(std::string(line));
+}
 
 // --------------------
 //  やねうら王独自拡張
 // --------------------
+
+// カレントフォルダに"engine_option_profile.txt"(これは引数で指定されている)が
+// あればそれを読み込み、どのエンジンオプション群を生やすかを決定する。
+// この関数は"usi"応答より前に呼ばれるため、USIプロトコルに余計な出力を混ぜない。
+void OptionsMap::read_engine_option_profile(const std::string& filename)
+{
+	SystemIO::TextReader reader;
+	if (reader.Open(filename).is_not_ok())
+		return;
+
+	std::string line;
+	while (reader.ReadLine(line).is_ok())
+	{
+		line = StringExtension::trim(line);
+
+		if (line.empty() || line[0] == '#')
+			continue;
+		if (line.size() >= 2 && line[0] == '/' && line[1] == '/')
+			continue;
+
+		const auto line2 = StringExtension::Replace(line, '=', ' ');
+		Parser::LineScanner scanner(line2);
+		const std::string key = scanner.get_text();
+
+		if (!StringExtension::stricmp(key, "BOOK_OPTIONS_V2"))
+		{
+			book_options_version = 2;
+			continue;
+		}
+
+		if (!StringExtension::stricmp(key, "BOOK_OPTIONS"))
+		{
+			const std::string value = scanner.get_text();
+			if (!StringExtension::stricmp(value, "V2") || value == "2")
+				book_options_version = 2;
+			else if (!StringExtension::stricmp(value, "V1") || value == "1")
+				book_options_version = 1;
+		}
+	}
+}
 
 // カレントフォルダに"engine_options.txt"(これは引数で指定されている)が
 // あればそれをオプションとしてOptions[]の値をオーバーライドする機能。

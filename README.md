@@ -1,11 +1,14 @@
-﻿[![Make CI (MSYS2 for Windows)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-msys2.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-msys2.yml)
-[![Make CI (DeepLearning for Windows)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-windows.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-windows.yml)
-[![Make CI (MinGW for Windows)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-mingw.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-mingw.yml)
-[![Make CI (for Ubuntu Linux)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make.yml)
-[![Make CI (DeepLearning for Ubuntu Linux)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-ubuntu.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-ubuntu.yml)
-[![NDK CI (for Android)](https://github.com/yaneurao/YaneuraOu/actions/workflows/ndk.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/ndk.yml)
-[![Make CI (for macOS)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-macos.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-macos.yml)
-[![Make CI (for WebAssembly)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-wasm.yml/badge.svg?event=push)](https://github.com/yaneurao/YaneuraOu/actions/workflows/make-wasm.yml)
+﻿<p>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-msys2.yml"><img align="left" alt="Make CI (MSYS2 for Windows)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-msys2.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-windows.yml"><img align="left" alt="Make CI (DeepLearning for Windows)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-windows.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-mingw.yml"><img align="left" alt="Make CI (MinGW for Windows)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-mingw.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make.yml"><img align="left" alt="Make CI (for Ubuntu Linux)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-ubuntu.yml"><img align="left" alt="Make CI (DeepLearning for Ubuntu Linux)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-deep-ubuntu.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/ndk.yml"><img align="left" alt="NDK CI (for Android)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/ndk.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-macos.yml"><img align="left" alt="Make CI (for macOS)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-macos.yml/badge.svg?event=push"></a>
+<a href="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-wasm.yml"><img align="left" alt="Make CI (for WebAssembly)" src="https://github.com/yaneurao/YaneuraOu/actions/workflows/make-wasm.yml/badge.svg?event=push"></a>
+<br clear="left">
+</p>
 
 # About this project
 
@@ -29,6 +32,9 @@ YaneuraOu is the World's Strongest Shogi engine(AI player) , WCSC29 1st winner ,
 
 # やねうら王エンジンの大会での戦績
 
+- 2026年 第7回電竜戦TSECノー相居飛車指定局面と先手持ち時間０戦
+  - 第1部『Ryfamate』優勝(NNUEとDL系の合議でNNUE探索部がやねうら王)
+  - 第2部『水匠』優勝(探索部やねうら王V9.60)
 - 2026年 第36回 世界コンピュータ将棋選手権(WCSC36)『水匠』4位。(探索部やねうら王V9.30改)
 - 2025年 文部科学大臣杯第6回世界将棋AI電竜戦本戦 『水匠Concerto』準優勝。(探索部やねうら王V9.10改。やねうらおはチームメンバーとして参加)
 - 2025年 第35回 世界コンピュータ将棋選手権(WCSC35)『水匠』優勝。(探索部やねうら王V8.60改)

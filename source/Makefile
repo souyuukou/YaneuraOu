@@ -84,6 +84,7 @@ TARGET_CPU = AVX2
 #TARGET_CPU = ZEN1
 #TARGET_CPU = ZEN2
 #TARGET_CPU = ZEN3
+#TARGET_CPU = ZEN3AVX512VNNI
 # -- ARMとか
 #TARGET_CPU = OTHER
 #TARGET_CPU = WINARM64
@@ -123,7 +124,7 @@ IS_NNUE_EDITION   := $(filter NNUE NNUE_% SFNN%,$(ENGINE_ARCH_UPPER))
 INVALID_ENGINE_ARCH := $(strip $(findstring SFNNWOP,$(ENGINE_ARCH_UPPER)) $(findstring LS9,$(ENGINE_ARCH_UPPER)))
 
 ifneq (,$(INVALID_ENGINE_ARCH))
-$(error Unsupported YANEURAOU_EDITION '$(YANEURAOU_EDITION)'. Use SFNN1536 or SFNN_..._k3k3 / SFNN_..._king3_by_king3)
+$(error Unsupported YANEURAOU_EDITION '$(YANEURAOU_EDITION)'. Use SFNN1536, SFNN_... without suffix, or SFNN_..._hand4/16/64/64z/256/1024 / SFNN_..._k3k3 / SFNN_..._k9k9 / SFNN_..._k9k9z / SFNN_..._k13k13z / SFNN_..._k21k21 / SFNN_..._k29k29 / SFNN_..._progress2/3/4/8/16/32)
 endif
 
 # エンジンの表示名 (engine displayname)
@@ -232,7 +233,14 @@ else
 		EM_EXPORT_NAME=YaneuraOu
 		EM_INITIAL_MEMORY_SIZE=$(shell if [ $(MATERIAL_LEVEL) -ge 5 ]; then echo 385875968; else echo 138412032; fi)
 		CPPFLAGS += -Wno-unused-parameter
-		CPPFLAGS += -DUSE_WASM_SIMD -msimd128
+		# 🚧 ワークアラウンド : USE_WASM_SIMDは定義しない。
+		#     eval/nnue/wasm_simd.cppのカーネルは重みを行優先の配置で読むが、
+		#     USE_SSE42からUSE_SSSE3が有効になるため、AffineTransform::GetWeightIndex()は
+		#     重みをSSSE3向けに並べ替えて格納する。この不整合により、AffineTransformの
+		#     出力が正しくならない。
+		#     定義しなくても-msse4.2と-msimd128により、SSSE3向けの実装が
+		#     wasm simd128にコンパイルされる。
+		CPPFLAGS += -msimd128
 		CPPFLAGS += -DUSE_SSE42 -msse4.2
 		CPPFLAGS += -pthread
 		CPPFLAGS += -s STRICT=1
@@ -491,14 +499,17 @@ ifneq (,$(IS_NNUE_EDITION))
 			CPPFLAGS += -DNNUE_ARCHITECTURE_HEADER=$(ARCH_HEADER_FILE)
 			ARCH_GEN_SCRIPT = $(PYTHON) eval/nnue/architectures/nnue_arch_gen.py $(NNUE_ARCH) eval/nnue/architectures
 
-		# SFNN_* はPSQTなしSFNNなので、シンボル SFNNwoPSQT 定義しておく。
-		ifneq (,$(filter SFNN%,$(NNUE_ARCH_UPPER)))
-			CPPFLAGS += -DSFNNwoPSQT
-		endif
-		# V2バリアントの場合、SFNNwoPSQT_V2も定義
-		ifneq (,$(findstring _V2,$(NNUE_ARCH_UPPER)))
-			CPPFLAGS += -DSFNNwoPSQT_V2
-		endif
+			# SFNN_* はPSQTなしSFNNなので、シンボル SFNNwoPSQT 定義しておく。
+			ifneq (,$(filter SFNN%,$(NNUE_ARCH_UPPER)))
+				CPPFLAGS += -DSFNNwoPSQT
+				ifneq (,$(findstring _7_,$(NNUE_ARCH_UPPER)))
+					CPPFLAGS += -DNNUE_SFNN_HIDDEN1_7
+				endif
+			endif
+			# Preserve the V2 evaluation-file format.
+			ifneq (,$(findstring _V2,$(NNUE_ARCH_UPPER)))
+				CPPFLAGS += -DSFNNwoPSQT_V2
+			endif
 		endif
 	endif
 
@@ -526,6 +537,13 @@ ifneq (,$(IS_NNUE_EDITION))
 	endif
 	ifeq ($(EVAL_EMBEDDING),ON)
 		CPPFLAGS += -DNNUE_EMBEDDING
+		ifneq (,$(findstring em++,$(COMPILER)))
+			# 📝 incbin.hによるパラメーターの埋め込みは、.incbinで置いたデータシンボルを
+			#     wasm-ldがリンクできないため使えない。代わりに、パラメーターを文字列リテラルとして
+			#     持つembedded_nnue.cppをリンクする。このファイルはscript/wasm_build.jsが生成する。
+			SOURCES += \
+				eval/nnue/embedded_nnue.cpp
+		endif
 	endif
 endif
 
@@ -584,6 +602,9 @@ else ifeq ($(TARGET_CPU),ZEN2)
 
 else ifeq ($(TARGET_CPU),ZEN3)
 	CPPFLAGS += -DUSE_AVX2 -DUSE_BMI2 -mbmi -mbmi2 -mavx2 -march=znver3
+
+else ifeq ($(TARGET_CPU),ZEN3AVX512VNNI)
+	CPPFLAGS += -DUSE_AVX512 -DUSE_BMI2 -DUSE_VNNI -march=znver3 -mbmi -mbmi2 -mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512vnni -mprefer-vector-width=512
 
 # それ以外は、AVX512,AVX2,SSE4.2,SSE4.1,SSE2のように利用できるCPU拡張命令で振り分ける。
 # AVX2より上位のCPUなら普通は(Intel系なら)BMI2命令を使ったほうが速いので"USE_BMI2"を指定しておく。

@@ -3,6 +3,9 @@
 #if defined(YANEURAOU_ENGINE_DEEP)
 
 #include "Node.h"
+#if defined(ENABLE_NN_CACHE)
+#include "PolicyValueCache.h"
+#endif
 #include "UctSearch.h"
 #include "dlshogi_searcher.h"
 #include "PrintInfo.h"
@@ -98,6 +101,15 @@ using namespace YaneuraOu::Eval::dlshogi;
 
 namespace dlshogi
 {
+#if defined(ENABLE_NN_CACHE)
+static PolicyValueCache policy_value_cache;
+
+void SetDnnCacheSize(size_t capacity)
+{
+	policy_value_cache.SetCapacity(capacity);
+}
+#endif
+
 // atomicな加算。
 template <typename T>
 inline void atomic_fetch_add(std::atomic<T>* obj, T arg) {
@@ -247,7 +259,7 @@ UCTSearcherGroup::Term()
 NodeTree* UctSearcher::get_node_tree() const { return grp->get_dlsearcher()->get_node_tree(); }
 
 // Evaluateを呼び出すリスト(queue)に追加する。
-void UctSearcher::QueuingNode(const Position *pos, Node* node, float* value_win)
+bool UctSearcher::QueuingNode(const Position *pos, Node* node, float* value_win)
 {
 #if defined(LOG_PRINT)
 	logger.print("sfen "+pos->sfen(0));
@@ -260,6 +272,22 @@ void UctSearcher::QueuingNode(const Position *pos, Node* node, float* value_win)
 		std::cout << "error" << std::endl;
 	}*/
 
+#if defined(ENABLE_NN_CACHE) && !defined(USE_POLICY_BOOK) && !defined(MAKE_BOOK)
+	Key policy_value_cache_key = 0;
+	if (policy_value_cache.IsEnabled()) {
+		policy_value_cache_key = pos->key();
+		PolicyValueCache::ResultPtr cached;
+		if (policy_value_cache.Lookup(policy_value_cache_key, node->child_num, cached)) {
+			ChildNode* uct_child = node->child.get();
+			for (ChildNumType i = 0; i < node->child_num; ++i)
+				uct_child[i].nnrate = cached->policy[i];
+			*value_win = cached->value;
+			node->SetEvaled();
+			return true;
+		}
+	}
+#endif
+
 	// 現在の局面に出現している特徴量を設定する。
 	// current_policy_value_batch_indexは、UctSearchThreadごとに持っているのでlock不要
 
@@ -270,6 +298,9 @@ void UctSearcher::QueuingNode(const Position *pos, Node* node, float* value_win)
 #if defined(USE_POLICY_BOOK)
 		pos->hash_key() ,
 #endif
+#if defined(ENABLE_NN_CACHE)
+		policy_value_cache_key,
+#endif
 		value_win};
 
 #ifdef MAKE_BOOK
@@ -278,6 +309,7 @@ void UctSearcher::QueuingNode(const Position *pos, Node* node, float* value_win)
 
 	current_policy_value_batch_index++;
 	// これが、policy_value_batch_maxsize分だけ溜まったら、nn->forward()を呼び出す。
+	return false;
 }
 
 // leaf node用の詰め将棋ルーチンの初期化(alloc)を行う。
@@ -709,12 +741,14 @@ float UctSearcher::UctSearch(Position* pos, ChildNode* parent , Node* current, N
 					else
 					{
 						// ノードをキューに追加
-						QueuingNode(pos, child_node , &visitor.value_win);
-
-						// このとき、まだEvalNodeが完了していないのでchild_node->evaledはまだfalseのまま
-						// にしておく必要がある。
-
-						return QUEUING;
+						if (QueuingNode(pos, child_node, &visitor.value_win))
+							result = 1.0f - visitor.value_win;
+						else
+						{
+							// このとき、まだEvalNodeが完了していないのでchild_node->evaledはまだfalseのまま
+							// にしておく必要がある。
+							return QUEUING;
+						}
 					}
 				}
 
@@ -1111,6 +1145,16 @@ void UctSearcher::EvalNode() {
             }
         }
 #endif
+#if defined(ENABLE_NN_CACHE) && !defined(USE_POLICY_BOOK) && !defined(MAKE_BOOK)
+		if (policy_value_cache.IsEnabled()) {
+			std::vector<float> policy(child_num);
+			for (ChildNumType j = 0; j < child_num; ++j)
+				policy[j] = uct_child[j].nnrate;
+			policy_value_cache.Store(policy_value_batch[i].policy_value_cache_key,
+			                         *policy_value_batch[i].value_win, std::move(policy));
+		}
+#endif
+
         node->SetEvaled();
     }
 }
